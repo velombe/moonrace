@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { MOON_KM } from "@/game/constants";
 import { dayKey } from "@/lib/daily";
-import { getStore } from "@/lib/store";
+import { ANONYMOUS, getStore, type RunEntry } from "@/lib/store";
 import { verifyRunToken } from "@/lib/token";
-import { checkResult, cleanName, type FinishBody } from "@/lib/validate";
+import { getPilot, touchPilot } from "@/lib/pilot";
+import { checkResult, type FinishBody } from "@/lib/validate";
 
 export const dynamic = "force-dynamic";
 
@@ -29,13 +30,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Run already submitted" }, { status: 409 });
   }
 
-  const name = cleanName(body.name);
+  // The name comes from the pilot who started the run, never from the request body,
+  // so nobody can post a score as someone else.
+  const found = claims.pid ? await getPilot(store, claims.pid) : null;
+  const pilot = found ? await touchPilot(store, found) : null;
+  const name = pilot?.callsign ?? ANONYMOUS;
   const km = Math.min(MOON_KM, body.km);
   const pct = Math.min(100, (km / MOON_KM) * 100);
   // Runs that cross midnight count for the day they started, if it's still today or yesterday.
   const today = dayKey();
   const day = claims.day === today || Date.now() - claims.iat < 2 * 60 * 60 * 1000 ? claims.day : today;
-  const { rank, total } = await store.recordRun(day, {
+  const entry: RunEntry = {
     runId: claims.runId,
     name,
     km,
@@ -43,9 +48,15 @@ export async function POST(req: NextRequest) {
     closeCalls: Math.floor(body.closeCalls),
     reason: body.reason,
     at: Date.now(),
-  });
+    durationMs: Math.round(body.durationMs),
+    ...(pilot ? { pilotId: pilot.id } : {}),
+  };
+  // Both boards keep each pilot's best run only; names are their current callsign when read.
+  const placed = await store.recordRun(day, entry);
+  const { rank, total } = placed.today;
+  const allTime = placed.allTime;
   let firstToMoon = false;
-  if (body.reason === "moon") firstToMoon = await store.claimFirstMoon({ name, at: Date.now() });
+  if (body.reason === "moon") firstToMoon = await store.claimFirstMoon({ name, at: Date.now(), ...(pilot ? { pilotId: pilot.id } : {}) });
 
-  return NextResponse.json({ rank, total, firstToMoon });
+  return NextResponse.json({ rank, total, firstToMoon, allTime });
 }

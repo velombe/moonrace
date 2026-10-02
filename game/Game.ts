@@ -213,6 +213,8 @@ export class Game {
   private camOffset = new THREE.Vector3(10, 3, 10);
   private lookOffset = new THREE.Vector3();
   private orbit = 0.8;
+  /** Title-screen framing offset (px), eased so leaving the title doesn't jump. */
+  private frameShift = new THREE.Vector2();
   private raf = 0;
   private last = performance.now();
   private hudCache: Record<string, string> = {};
@@ -1268,6 +1270,15 @@ export class Game {
       this.cam.position.y += (Math.random() - 0.5) * shake;
     }
     this.cam.lookAt(sp.clone().add(this.lookOffset));
+    // On the title screen the menu covers one side, so frame the rocket in the open part:
+    // right of centre on wide screens, higher up on tall ones (matches .screen.home in CSS).
+    const W0 = this.container.clientWidth, H0 = Math.max(1, this.container.clientHeight);
+    const wide = W0 / H0 > 1.15;
+    const shiftX = this.state === "title" && wide ? -W0 * 0.2 : 0;
+    const shiftY = this.state === "title" && !wide ? H0 * 0.27 : 0;
+    this.frameShift.lerp(new THREE.Vector2(shiftX, shiftY), 1 - Math.exp(-4 * realDt));
+    if (Math.abs(this.frameShift.x) + Math.abs(this.frameShift.y) > 0.5) this.cam.setViewOffset(W0, H0, this.frameShift.x, this.frameShift.y, W0, H0);
+    else if (this.cam.view?.enabled) this.cam.clearViewOffset();
     const wantFov = this.state === "play" ? 58 + this.speed * 0.07 + this.boost * 9 : 52;
     if (Math.abs(this.cam.fov - wantFov) > 0.05) {
       this.cam.fov += (wantFov - this.cam.fov) * Math.min(1, realDt * 2);

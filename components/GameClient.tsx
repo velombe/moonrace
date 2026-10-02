@@ -6,8 +6,10 @@ import { Game, type GameState, type HudRefs, type RunResult, type TestFlight } f
 import { END_REASON_TEXT, formatKm, formatPct } from "@/game/constants";
 import { LANDMARKS } from "@/game/moonAtlas";
 import { dayKey, daySeed } from "@/lib/daily";
+import { ensurePilot, pilotHeaders, type PilotInfo } from "@/lib/pilotClient";
 import { deflectorSummary, shareQuery } from "@/lib/share";
 import { LocalSiteStore, type Planting, type SiteStore } from "@/lib/site";
+import PilotControls from "./PilotControls";
 import SurfaceUI from "./SurfaceUI";
 
 type Phase = "loading" | GameState;
@@ -26,7 +28,7 @@ interface Stats {
 type Submit =
   | { status: "idle" }
   | { status: "sending" }
-  | { status: "done"; rank: number; total: number; firstToMoon: boolean }
+  | { status: "done"; rank: number; total: number; firstToMoon: boolean; allTime: { rank: number; total: number; improved: boolean } | null }
   | { status: "error"; message: string };
 
 /**
@@ -100,7 +102,19 @@ export default function GameClient() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [callsign, setCallsign] = useState("");
+  const [pilot, setPilot] = useState<PilotInfo | null>(null);
+  const [pilotStatus, setPilotStatus] = useState<"loading" | "ready" | "offline">("loading");
+  const [pilotNote, setPilotNote] = useState<{ name: string; error: string; suggestion?: string } | null>(null);
+  const saveCallsignRef = useRef<(() => void) | null>(null);
   const [best, setBest] = useState(0);
+  /** "server": the pilot's recorded best (matches the all-time board). "device": offline fallback from this browser. */
+  const [bestSource, setBestSourceState] = useState<"server" | "device">("device");
+  // Mirrored in a ref: the game-over handler is created once and reads it later.
+  const bestSourceRef = useRef<"server" | "device">("device");
+  const setBestSource = (s: "server" | "device") => {
+    bestSourceRef.current = s;
+    setBestSourceState(s);
+  };
   const [shareLabel, setShareLabel] = useState("Share result");
   const [test, setTest] = useState<TestFlight | null>(null);
   const [obsLoading, setObsLoading] = useState(false);
@@ -122,7 +136,7 @@ export default function GameClient() {
 
   const prefetchTicket = useCallback(async () => {
     try {
-      const res = await fetch("/api/run/start", { method: "POST" });
+      const res = await fetch("/api/run/start", { method: "POST", headers: pilotHeaders() });
       if (res.ok) ticketRef.current = (await res.json()) as RunTicket;
     } catch {
       ticketRef.current = null;
@@ -138,14 +152,15 @@ export default function GameClient() {
         setSubmit({ status: "error", message: "Test flight. Not added to today's board." });
         return;
       }
-      const prevBest = parseFloat(readLocal("moonrace-best", "0")) || 0;
-      if (res.pct > prevBest) {
-        writeLocal("moonrace-best", String(res.pct));
-        setBest(res.pct);
-      }
+      // The device copy is only an offline fallback; rejected runs never count.
+      const keepOnDevice = () => {
+        if (res.pct > (parseFloat(readLocal("moonrace-best", "0")) || 0)) writeLocal("moonrace-best", String(res.pct));
+      };
       const token = activeTokenRef.current;
       activeTokenRef.current = null;
       if (!token) {
+        keepOnDevice();
+        if (bestSourceRef.current === "device") setBest((b) => Math.max(b, res.pct));
         setSubmit({ status: "error", message: "Offline run. Not added to today's board." });
         return;
       }
@@ -163,12 +178,19 @@ export default function GameClient() {
             asteroids: res.asteroids,
             satellites: res.satellites,
             reason: res.reason,
-            name: readLocal("moonrace-callsign"),
           }),
         });
         const data = await r.json();
         if (!r.ok) setSubmit({ status: "error", message: data.error ?? "Couldn't reach the leaderboard." });
-        else setSubmit({ status: "done", rank: data.rank, total: data.total, firstToMoon: data.firstToMoon });
+        else {
+          setSubmit({ status: "done", rank: data.rank, total: data.total, firstToMoon: data.firstToMoon, allTime: data.allTime ?? null });
+          keepOnDevice();
+          // A new personal best on the server is the new "Your best".
+          if (data.allTime?.improved) {
+            setBest(res.pct);
+            setBestSource("server");
+          }
+        }
       } catch {
         setSubmit({ status: "error", message: "Couldn't reach the leaderboard." });
       }
@@ -183,6 +205,7 @@ export default function GameClient() {
     setTest(readTestFlight());
     setTestSurface(readTestSurface());
     void storeRef.current.list().then(setPlantings);
+    // Until the pilot loads (or if the server can't be reached), show this device's record.
     setBest(parseFloat(readLocal("moonrace-best", "0")) || 0);
     let game: Game | null = null;
     const timer = setTimeout(() => {
@@ -211,7 +234,21 @@ export default function GameClient() {
       setVoiceSupported(game.voice.supported);
       setPhase("title");
     }, 30);
-    void prefetchTicket();
+    // Who's flying: load (or create) this device's pilot, then get a run ticket signed for them.
+    void ensurePilot(readLocal("moonrace-callsign")).then((r) => {
+      if (r) {
+        setPilot(r.pilot);
+        setPilotStatus("ready");
+        setBest(r.pilot.best?.pct ?? 0);
+        setBestSource("server");
+        setPilotNote(r.claim ? { name: readLocal("moonrace-callsign"), ...r.claim } : null);
+        if (r.pilot.callsign) {
+          setCallsign(r.pilot.callsign);
+          writeLocal("moonrace-callsign", r.pilot.callsign);
+        }
+      } else setPilotStatus("offline");
+      void prefetchTicket();
+    });
     void loadStats();
     return () => {
       clearTimeout(timer);
@@ -224,6 +261,9 @@ export default function GameClient() {
   const launch = useCallback(() => {
     const game = gameRef.current;
     if (!game) return;
+    // A callsign typed but not yet claimed is claimed now. It doesn't hold up the launch:
+    // the run's name is read on the server when it finishes, long after this lands.
+    saveCallsignRef.current?.();
     setResult(null);
     setSubmit({ status: "idle" });
     if (test) {
@@ -463,45 +503,82 @@ export default function GameClient() {
       )}
 
       {phase === "title" && (
-        <div className="screen">
-          <div className="col">
+        <div className="screen home">
+          <div className="home-main">
+            <p className="home-kicker"><i aria-hidden="true" />Today&apos;s route · the same for every pilot</p>
             <h1 className="wordmark">moonrace<span>.lol</span></h1>
-            <p className="lede">384,400 km between you and the Moon. Weather balloons, satellites, and asteroids in the way. Fuel along the route.</p>
-            <p className="help">Steer with your mouse, drag with a finger, or use the arrow keys.<br />Press C or tap the small screen to ride in the cabin.</p>
-            <label className="callsign">
-              Callsign
-              <input
-                value={callsign}
-                maxLength={18}
-                placeholder="Anonymous pilot"
-                onChange={(e) => {
-                  setCallsign(e.target.value);
-                  writeLocal("moonrace-callsign", e.target.value);
-                }}
-              />
-            </label>
+            <p className="lede">384,400 km to the Moon. Weather balloons, satellites and asteroids in the way, fuel along the route. Fly close to things. Not into them.</p>
+            <div className="home-card">
+            <PilotControls
+              pilot={pilot}
+              status={pilotStatus}
+              draft={callsign}
+              note={pilotNote}
+              saveRef={saveCallsignRef}
+              onSaveFailed={(n) => setPilotNote(n)}
+              onPilot={(p, switched) => {
+                setPilot(p);
+                setPilotNote(null);
+                setBest(p.best?.pct ?? 0);
+                setBestSource("server");
+                setCallsign(p.callsign ?? "");
+                writeLocal("moonrace-callsign", p.callsign ?? "");
+                // A different pilot needs a run ticket signed for them.
+                if (switched) {
+                  ticketRef.current = null;
+                  void prefetchTicket();
+                }
+              }}
+            />
             {test && <p className="test-badge">Test flight: starts at {test.startPct}% with no collisions. Not submitted.</p>}
-            <div className="row tight">
-              <button className="btn go" onClick={launch}>{test ? "Launch test flight" : "Launch"}</button>
-              {testSurface && <button className="btn ghost" onClick={() => gameRef.current?.landTest()}>Go to landing site</button>}
+            <div className="home-actions">
+              <button className="btn go launch" onClick={launch}>
+                {test ? "Launch test flight" : "Launch"}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+              </button>
               <button className="btn ghost" onClick={openObservatory} disabled={obsLoading}>
                 {obsLoading ? "Pointing the telescope…" : "Look at the Moon"}
               </button>
+              {testSurface && <button className="btn ghost" onClick={() => gameRef.current?.landTest()}>Go to landing site</button>}
             </div>
-            <p className="today">
-              {stats?.firstMoon ? (
-                <>First to reach the Moon: <strong>{stats.firstMoon.name}</strong>. </>
-              ) : (
-                <>Nobody has reached the Moon yet. </>
-              )}
-              {leader ? (
-                <>Today&apos;s furthest: <strong>{formatPct(leader.pct)}</strong> by {leader.name}.</>
-              ) : (
-                <>Nobody has flown today.</>
-              )}
+            </div>
+            <ul className="home-stats" aria-label="Today">
+              <li>
+                <small>Today&apos;s furthest</small>
+                <strong className="num">{leader ? formatPct(leader.pct) : "—"}</strong>
+                <span>{leader ? leader.name : "Nobody has flown yet"}</span>
+              </li>
+              <li>
+                <small>First to the Moon</small>
+                <strong className={stats?.firstMoon ? "name" : "num"}>{stats?.firstMoon ? stats.firstMoon.name : "—"}</strong>
+                <span>{stats?.firstMoon ? "Forever on the record" : "Still up for grabs"}</span>
+              </li>
+              <li>
+                <small>Your best</small>
+                <strong className="num">{best > 0 ? formatPct(best) : "—"}</strong>
+                <span>
+                  {best > 0
+                    ? bestSource === "device" ? "on this device" : "of the way"
+                    : pilot && !pilot.callsign ? "Claim a callsign to keep it" : "No flights yet"}
+                </span>
+              </li>
+              <li>
+                <small>Runs today</small>
+                <strong className="num">{stats ? stats.runs.toLocaleString("en-US") : "—"}</strong>
+                <Link href="/leaderboard">See the leaderboard</Link>
+              </li>
+            </ul>
+            <Link className="home-board" href="/leaderboard">Today&apos;s leaderboard →</Link>
+            <p className="home-help desk">
+              <span><kbd>Mouse</kbd> <kbd>←</kbd><kbd>→</kbd> steer</span>
+              <span><kbd>C</kbd> cabin view</span>
+              <span><kbd>Click</kbd> <kbd>Space</kbd> deflector, in space</span>
             </p>
-            {best > 0 && <p className="today">Your best: {formatPct(best)} of the way</p>}
-            <Link className="small-link" href="/leaderboard">Today&apos;s leaderboard</Link>
+            <p className="home-help touch">
+              <span><kbd>Drag</kbd> steer</span>
+              <span><kbd>Small screen</kbd> cabin view</span>
+              <span><kbd>◎</kbd> deflector, in space</span>
+            </p>
           </div>
         </div>
       )}
@@ -531,6 +608,10 @@ export default function GameClient() {
                 <>
                   {submit.firstToMoon && <><strong>First person ever to reach the Moon.</strong> </>}
                   <strong>#{submit.rank}</strong> of {submit.total} today
+                  {submit.allTime?.improved && (
+                    <span className="pb"> · New personal best, <strong>#{submit.allTime.rank}</strong> all time</span>
+                  )}
+                  {!pilot?.callsign && <span className="pb"> · Claim a callsign to put your name on it</span>}
                 </>
               )}
               {submit.status === "error" && <span className="why">{submit.message}</span>}

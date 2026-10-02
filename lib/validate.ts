@@ -11,17 +11,12 @@ export interface FinishBody {
   asteroids?: number;
   satellites?: number;
   reason: EndReason;
+  /** Ignored: the server uses the pilot's claimed callsign. Old clients still send it. */
   name?: string;
 }
 
 const REASONS: EndReason[] = ["balloon", "satellite", "junk", "asteroid", "fuel", "moon"];
 const MAX_TOKEN_AGE_MS = 2 * 60 * 60 * 1000;
-
-export function cleanName(raw: unknown): string {
-  if (typeof raw !== "string") return "Anonymous pilot";
-  const s = raw.replace(/[^\p{L}\p{N} _.\-]/gu, "").trim().slice(0, 18);
-  return s.length >= 2 ? s : "Anonymous pilot";
-}
 
 /**
  * Rejects results that are physically impossible for this run.

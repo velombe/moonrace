@@ -35,9 +35,19 @@ function reasonText(reason: string) {
   return END_REASON_TEXT[reason as EndReason] ?? "";
 }
 
-function details(e: RunEntry) {
-  const parts = [reasonText(e.reason)];
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+
+/** "Reached the Moon in 2:05", or the crash reason. */
+function outcome(e: RunEntry) {
+  return e.reason === "moon" && e.durationMs ? `Reached the Moon in ${clock(e.durationMs)}` : reasonText(e.reason);
+}
+
+const shortDate = (at: number) => new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+function details(e: RunEntry, dated: boolean) {
+  const parts = [outcome(e)];
   if (e.closeCalls) parts.push(`${e.closeCalls} close call${e.closeCalls === 1 ? "" : "s"}`);
+  if (dated) parts.push(shortDate(e.at));
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -51,8 +61,8 @@ function Track({ pct }: { pct: number }) {
   );
 }
 
-/** Today's board: a podium for the top three, then everyone else. */
-export default function Leaderboard({ entries }: { entries: RunEntry[] }) {
+/** A board: a podium for the top three, then everyone else. `dated` shows when each run was flown (all-time). */
+export default function Leaderboard({ entries, dated = false }: { entries: RunEntry[]; dated?: boolean }) {
   const podium = entries.slice(0, 3);
   const rest = entries.slice(3);
   return (
@@ -69,8 +79,9 @@ export default function Leaderboard({ entries }: { entries: RunEntry[] }) {
               <div className="podium-km">{formatKm(e.km)} km</div>
               <Track pct={e.pct} />
               <div className="podium-meta">
-                <span>{reasonText(e.reason)}</span>
+                <span>{outcome(e)}</span>
                 {e.closeCalls > 0 && <span>{e.closeCalls} close call{e.closeCalls === 1 ? "" : "s"}</span>}
+                {dated && <span>{shortDate(e.at)}</span>}
               </div>
             </li>
           );
@@ -83,7 +94,7 @@ export default function Leaderboard({ entries }: { entries: RunEntry[] }) {
               <span className="lb-rank num">{i + 4}</span>
               <span className="lb-who">
                 <span className="lb-name">{e.name}</span>
-                <span className="lb-meta">{details(e)}</span>
+                <span className="lb-meta">{details(e, dated)}</span>
                 <Track pct={e.pct} />
               </span>
               <span className="lb-score">
