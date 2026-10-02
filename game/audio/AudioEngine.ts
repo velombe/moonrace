@@ -204,6 +204,34 @@ export class AudioEngine {
     this.burst(Math.max(0.3, staticSeconds), 1700, 2300, 0.018, 0, "bandpass", 1.5, 0.25);
   }
   quindarOut() { this.tone(2475, 0.25, "sine", 0.045); }
+  /** Deflector coming online at the Kármán line: a charging whine, then a latch. */
+  deflectorArm() {
+    this.tone(160, 1.3, "triangle", 0.09, 0, 1500);
+    this.tone(1500, 0.1, "sine", 0.12, 1.3);
+    this.burst(0.08, 3000, 2000, 0.08, 0, "bandpass", 2, 1.3);
+  }
+  /** A slot filled: rising two-note chime, higher for each stored shot. */
+  deflectorCharged(slots: number) {
+    const f = 520 * Math.pow(2, (slots * 3) / 12);
+    this.tone(f, 0.14, "sine", 0.13, 0, f * 1.12);
+    this.tone(f * 1.5, 0.26, "triangle", 0.1, 0.08, f * 1.68);
+  }
+  deflectorFire() {
+    this.tone(1900, 0.2, "sawtooth", 0.06, 0, 240);
+    this.burst(0.2, 4200, 700, 0.12, 0, "bandpass", 1.4);
+    this.tone(95, 0.22, "sine", 0.3, 0, 50);
+  }
+  /** Deep thump on a hit; `big` adds a longer tail (split asteroid, satellite). */
+  deflectorHit(big: boolean, pan: number) {
+    this.tone(72, big ? 1.1 : 0.6, "sine", 0.75, 0.02, 28);
+    this.burst(big ? 1.2 : 0.6, 2200, 80, big ? 0.7 : 0.5, pan, "lowpass", 0.7, 0.02);
+    if (big) this.burst(0.5, 6000, 2500, 0.12, pan, "highpass", 0.6, 0.08);
+  }
+  /** Not ready (empty, overheated, or not armed yet). */
+  deflectorDenied() {
+    this.tone(196, 0.07, "square", 0.05);
+    this.tone(147, 0.1, "square", 0.05, 0.08);
+  }
   moon() { [523.3, 659.3, 784, 1046.5].forEach((f, i) => this.tone(f, 3.2, "triangle", 0.1, i * 0.12)); }
 
   // ---- helpers ----

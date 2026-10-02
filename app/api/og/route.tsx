@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import { formatKm, formatPct } from "@/game/constants";
-import { parseShare } from "@/lib/share";
+import { deflectorSummary, parseShare } from "@/lib/share";
 
 /** Share card: 1200x630 image shown when a result link is posted anywhere. */
 export async function GET(req: Request) {
@@ -31,6 +31,9 @@ export async function GET(req: Request) {
           <div style={{ fontSize: 28, color: "#b4c2e0", marginTop: 14, display: "flex" }}>
             {`${formatKm(s.km)} km${s.closeCalls ? `  ·  ${s.closeCalls} close calls` : ""}`}
           </div>
+          {deflectorSummary(s) ? (
+            <div style={{ fontSize: 26, color: s.satellites ? "#ff8a96" : "#b4c2e0", marginTop: 8, display: "flex" }}>{deflectorSummary(s).replace(/ · /g, "  ·  ")}</div>
+          ) : null}
           {s.quote ? (
             <div style={{ fontSize: 30, marginTop: 34, maxWidth: 720, display: "flex" }}>
               <span style={{ color: "#ffb347", marginRight: 12 }}>{s.speaker || "Houston"}</span>

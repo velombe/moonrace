@@ -1,4 +1,4 @@
-import { MOON_KM, kmAt, maxUnitsIn, type EndReason } from "@/game/constants";
+import { MOON_KM, kmAt, maxShots, maxUnitsIn, type EndReason } from "@/game/constants";
 import type { RunClaims } from "./token";
 
 export interface FinishBody {
@@ -6,6 +6,10 @@ export interface FinishBody {
   km: number;
   durationMs: number;
   closeCalls: number;
+  /** Deflector stats (optional: older clients don't send them). */
+  shots?: number;
+  asteroids?: number;
+  satellites?: number;
   reason: EndReason;
   name?: string;
 }
@@ -35,5 +39,11 @@ export function checkResult(body: FinishBody, claims: RunClaims, now = Date.now(
   if (body.km > Math.min(MOON_KM, maxKm)) return "distance too high for duration";
   if (body.reason === "moon" && body.km < MOON_KM * 0.999) return "moon claim without distance";
   if (body.closeCalls > body.durationMs / 250 + 2) return "too many close calls";
+  // Shots are earned by near misses, and each shot destroys at most one thing.
+  const extra = [body.shots ?? 0, body.asteroids ?? 0, body.satellites ?? 0];
+  if (!extra.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0)) return "bad deflector numbers";
+  const [shots, asteroids, satellites] = extra;
+  if (shots > maxShots(body.closeCalls)) return "more shots than charge";
+  if (asteroids + satellites > shots) return "more kills than shots";
   return null;
 }

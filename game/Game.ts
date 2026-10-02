@@ -4,9 +4,10 @@ import { Voice } from "./audio/Voice";
 import { Chatter, type ChatterView, type Quote } from "./chatter";
 import { Cockpit, type Threat } from "./cockpit/Cockpit";
 import {
-  FUEL_BURN, FUEL_PICKUP, MAX_BOOST, MILESTONES, MOON_KM, TOTAL_UNITS,
-  formatKm, formatPct, kmAt, speedAt, unitsAt, type EndReason,
+  CHARGE_CLOSE, CHARGE_RAZOR, CHARGE_STREAK, DEFLECTOR_ARM_KM, FUEL_BURN, FUEL_PICKUP, JUNK_CLEANUP_FUEL, MAX_BOOST,
+  MILESTONES, MOON_KM, SPLIT_RADIUS, TOTAL_UNITS, formatKm, formatPct, kmAt, speedAt, unitsAt, type EndReason,
 } from "./constants";
+import { Deflector } from "./deflector";
 import { Observatory } from "./observatory";
 import { LandingSite, type SpotId } from "./surface/LandingSite";
 import type { Planting } from "./surface/plantings";
@@ -59,6 +60,10 @@ export interface HudRefs {
   moonAlt: HTMLElement;
   /** Name labels over flags and panels at the landing site, in plantings order. */
   siteLabels: HTMLElement[];
+  /** Deflector: the lock reticle (with its target label) and one charge pip per slot. */
+  reticle: HTMLElement;
+  reticleLabel: HTMLElement;
+  deflectorPips: HTMLElement[];
 }
 
 export interface RunResult {
@@ -70,6 +75,11 @@ export interface RunResult {
   bestStreak: number;
   lastMilestone: string | null;
   quote: Quote | null;
+  /** Deflector shots fired, and what they took out. */
+  shots: number;
+  asteroids: number;
+  satellites: number;
+  junk: number;
   /** True for test flights: don't submit, don't count as a best. */
   test: boolean;
 }
@@ -96,6 +106,9 @@ interface Fx {
   max: number;
   kind: "bit" | "fire";
 }
+
+/** Small box shared by every chip a deflector hit knocks off. */
+const CHIP_GEO = new THREE.BoxGeometry(0.22, 0.16, 0.3);
 
 export class Game {
   readonly audio = new AudioEngine();
@@ -127,6 +140,13 @@ export class Game {
   private fog = new THREE.Fog(0xc6e0f7, 200, 520);
 
   private objects: WorldObject[] = [];
+  private deflector: Deflector;
+  /** Seeded per run but separate from `rng`, so fragments never shift the daily layout. */
+  private debrisRng = new Rng(1);
+  private armAt = -1;
+  private armedSaid = true;
+  private notAuthSaid = false;
+  private kills = { asteroids: 0, satellites: 0, junk: 0 };
   private clouds: THREE.Group[] = [];
   private effects: Fx[] = [];
 
@@ -215,6 +235,7 @@ export class Game {
 
     this.glowTex = radialTexture([[0, "rgba(255,255,255,1)"], [0.12, "rgba(255,244,220,.95)"], [0.35, "rgba(255,190,110,.25)"], [1, "rgba(255,150,60,0)"]], 256);
     this.rocket = createRocket(this.glowTex);
+    this.deflector = new Deflector(this.scene, this.glowTex);
     this.cam.layers.enable(EXTERIOR_LAYER);
 
     this.views = new ViewRenderer(this.renderer, lowEnd);
@@ -260,6 +281,13 @@ export class Game {
     this.chatter.clear(true);
     this.clearWorld();
     this.rng = new Rng(seed);
+    this.debrisRng = new Rng(seed ^ 0x5f3759df);
+    this.deflector.reset();
+    this.armAt = -1;
+    this.armedSaid = true;
+    this.notAuthSaid = false;
+    this.kills = { asteroids: 0, satellites: 0, junk: 0 };
+    this.hud.root.classList.remove("armed");
     this.state = "count";
     this.countdown = COUNT_TIME;
     this.lastCount = null;
@@ -300,7 +328,7 @@ export class Game {
     this.canSkip = this.runs > 1;
     this.hud.root.classList.toggle("can-skip", this.canSkip);
     this.hud.root.classList.add("playing");
-    for (let z = -30; z > -500; z -= 16) this.addCloud(z, false);
+    if (!test || test.startPct <= 0) for (let z = -30; z > -500; z -= 16) this.addCloud(z, false);
     this.test = test;
     this.hud.root.classList.toggle("test-flight", !!test);
     if (test) {
@@ -313,6 +341,11 @@ export class Game {
       this.canSkip = true;
       this.countdown = COUNT_TIME - (LAUNCH_TIME - 0.35);
       this.tipSaid = true;
+      // Test flights start armed and fully charged, to try the deflector straight away.
+      if (this.km >= DEFLECTOR_ARM_KM) {
+        this.deflector.arm(true);
+        this.hud.root.classList.add("armed");
+      }
     }
     this.setState("count");
   }
@@ -326,6 +359,21 @@ export class Game {
   setVoice(on: boolean) {
     this.voice.prepare();
     this.voice.setEnabled(on);
+  }
+
+  /** Fires the deflector (click, Space, second finger, or the fire button). */
+  fire() {
+    if (this.state !== "play") return;
+    const r = this.deflector.fire(this.rocket.ship.position);
+    if (r === "fired") {
+      this.audio.deflectorFire();
+      this.cockpit.fire();
+      this.camKick = Math.max(this.camKick, 0.25);
+      return;
+    }
+    this.audio.deflectorDenied();
+    if (r === "unarmed" && this.km < DEFLECTOR_ARM_KM && !this.notAuthSaid) this.notAuthSaid = !!this.chatter.say("notAuthorized", 1);
+    else if (r === "hot") this.chatter.say("overheat", 1, 0.4);
   }
 
   /** Swaps the big screen and the picture-in-picture (outside ↔ cabin). Remembered. */
@@ -489,6 +537,14 @@ export class Game {
         this.site?.pointerDown(e);
         return;
       }
+      if (this.state === "play") {
+        if (e.pointerType === "mouse") {
+          if (e.button === 0) this.fire();
+          return;
+        }
+        // A second finger fires; the first one keeps steering.
+        if (this.touchId !== null && this.touchId !== e.pointerId) return this.fire();
+      }
       if (e.pointerType !== "mouse") {
         this.touchId = e.pointerId;
         this.touchX = e.clientX;
@@ -533,6 +589,7 @@ export class Game {
         return;
       }
       if ((e.key === "c" || e.key === "C") && !e.repeat) this.toggleView();
+      if (this.state === "play" && e.key === " " && !e.repeat) this.fire();
       if (this.state === "count" && [" ", "Enter", "Escape"].includes(e.key) && !e.repeat) {
         e.preventDefault();
         this.skipLaunch();
@@ -599,6 +656,7 @@ export class Game {
     this.clouds = [];
     this.effects.forEach((f) => this.scene.remove(f.obj));
     this.effects = [];
+    this.deflector.reset();
   }
 
   private toast(title: string, detail: string) {
@@ -625,12 +683,10 @@ export class Game {
     this.boost = 1;
     this.camKick = razor ? 1 : 0.6;
     const h = this.hud;
-    h.nearMissTitle.textContent = razor ? "Razor thin" : "Close call";
-    h.nearMissDetail.textContent = `+${gain} fuel${this.streak > 1 ? `   ×${this.streak} streak` : ""}`;
-    h.nearMiss.classList.toggle("razor", razor);
-    h.nearMiss.style.setProperty("--dx", `${(dx > 0 ? 1 : -1) * Math.min(120, innerWidth * 0.12)}px`);
-    this.retrigger(h.nearMiss, "pop");
+    this.pop(razor ? "Razor thin" : "Close call", `+${gain} fuel${this.streak > 1 ? `   ×${this.streak} streak` : ""}`, razor ? "razor" : "", dx);
     this.retrigger(dx > 0 ? h.edgeRight : h.edgeLeft, "flash");
+    const charge = (razor ? CHARGE_RAZOR : CHARGE_CLOSE) + Math.min(this.streak - 1, 2) * CHARGE_STREAK;
+    if (this.deflector.addCharge(Math.min(1, charge))) this.audio.deflectorCharged(Math.floor(this.deflector.charge));
     this.audio.nearMiss(this.streak, razor);
     this.cockpit.nearMiss(dx > 0 ? 1 : -1, razor);
     if (razor) this.chatter.say("razor", 1, 0.6);
@@ -644,6 +700,89 @@ export class Game {
     }
   }
 
+  /** The pop-up text at 60% height (near misses and deflector hits). */
+  private pop(title: string, detail: string, cls: "" | "razor" | "bad" | "hit", dx: number) {
+    const h = this.hud;
+    h.nearMissTitle.textContent = title;
+    h.nearMissDetail.textContent = detail;
+    for (const c of ["razor", "bad", "hit"]) h.nearMiss.classList.toggle(c, c === cls);
+    h.nearMiss.style.setProperty("--dx", `${(dx > 0 ? 1 : -1) * Math.min(120, innerWidth * 0.12)}px`);
+    this.retrigger(h.nearMiss, "pop");
+  }
+
+  /** What a deflector hit does: shatter, split, clean up, or a satellite you'll regret. */
+  private deflected(o: WorldObject) {
+    const i = this.objects.indexOf(o);
+    if (i < 0) return;
+    this.objects.splice(i, 1);
+    this.scene.remove(o.mesh);
+    const q = o.mesh.position, dx = q.x - this.rocket.ship.position.x;
+    const pan = THREE.MathUtils.clamp(dx / 10, -1, 1);
+    const split = o.type === "asteroid" && o.radius >= SPLIT_RADIUS;
+    const big = split || o.type === "satellite";
+    this.impact(o, big);
+    this.audio.deflectorHit(big, pan);
+    this.camKick = Math.max(this.camKick, big ? 0.8 : 0.5);
+    let kind: "asteroid" | "split" | "junk" | "satellite" = "asteroid";
+    if (o.type === "asteroid") {
+      this.kills.asteroids++;
+      if (split) {
+        kind = "split";
+        const parts = this.factory.fragments(o, this.debrisRng);
+        parts.forEach((f) => this.scene.add(f.mesh));
+        this.objects.push(...parts);
+        this.pop("Split", `Now there are ${parts.length}`, "hit", dx);
+        this.chatter.say("asteroidSplit", 1, 0.8);
+        if (this.t - this.lastSlowmo > 1.6) {
+          this.slowmo = 0.55;
+          this.lastSlowmo = this.t;
+          this.audio.slowmo();
+        }
+      } else {
+        this.pop("Deflected", "Asteroid destroyed", "hit", dx);
+        this.chatter.say("asteroidHit", 1, 0.45);
+      }
+    } else if (o.type === "junk") {
+      kind = "junk";
+      this.kills.junk++;
+      this.fuel = Math.min(100, this.fuel + JUNK_CLEANUP_FUEL);
+      this.pop("Orbital cleanup", `+${JUNK_CLEANUP_FUEL} fuel`, "hit", dx);
+      this.chatter.say("junkHit", 1, 0.4);
+    } else if (o.type === "satellite") {
+      kind = "satellite";
+      this.kills.satellites++;
+      const parts = this.factory.debris(o, this.debrisRng);
+      parts.forEach((f) => this.scene.add(f.mesh));
+      this.objects.push(...parts);
+      this.pop("Satellite destroyed", "Debris ahead", "bad", dx);
+      // Above story beats (2), below endings (3): the satellite line is the one people share.
+      this.chatter.say("satHit", 2.5);
+    }
+    this.cockpit.deflectorHit(kind);
+  }
+
+  /** Flash and chips flying off a hit. */
+  private impact(o: WorldObject, big: boolean) {
+    const at = o.mesh.position;
+    const mat = this.factory.chips(o.type);
+    const n = big ? 22 : 12;
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(CHIP_GEO, mat);
+      b.position.copy(at).add(new THREE.Vector3(fx.range(-1, 1), fx.range(-1, 1), fx.range(-1, 1)).multiplyScalar(o.radius * 0.6));
+      b.scale.setScalar(fx.range(0.6, 1.8) * (big ? 1.4 : 1));
+      this.scene.add(b);
+      const v = new THREE.Vector3(fx.range(-1, 1), fx.range(-1, 1), fx.range(-0.4, 1)).normalize().multiplyScalar(fx.range(6, 18));
+      this.effects.push({ obj: b, vel: v, life: fx.range(1.2, 2), max: 0, kind: "bit" });
+    }
+    for (let i = 0; i < (big ? 5 : 3); i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, color: i === 0 ? 0xffffff : o.type === "satellite" ? 0xff9a5a : 0xbfe0ff, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
+      s.position.copy(at);
+      s.scale.setScalar(2);
+      this.scene.add(s);
+      this.effects.push({ obj: s, vel: new THREE.Vector3(fx.range(-1.5, 1.5), fx.range(-1.5, 1.5), fx.range(-1.5, 1.5)), life: fx.range(0.5, 0.9), max: o.radius * (big ? 5 : 3.5), kind: "fire" });
+    }
+  }
+
   private explode() {
     const ship = this.rocket.ship;
     ship.visible = false;
@@ -654,7 +793,7 @@ export class Game {
       const b = new THREE.Mesh(bitGeo, new THREE.MeshStandardMaterial({ color: c, emissive: i % 4 < 2 ? c : 0, emissiveIntensity: 1.2 }));
       b.position.copy(ship.position);
       this.scene.add(b);
-      this.effects.push({ obj: b, vel: new THREE.Vector3(fx.range(-1, 1), fx.range(-1, 1), fx.range(-1, 1)).normalize().multiplyScalar(fx.range(4, 16)), life: 3, max: 0, kind: "bit" });
+      this.effects.push({ obj: b, vel: new THREE.Vector3(fx.range(-1, 1), fx.range(-1, 1), fx.range(-1, 1)).normalize().multiplyScalar(fx.range(4, 16)), life: Infinity, max: 0, kind: "bit" });
     }
     for (let i = 0; i < 14; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, color: i < 6 ? 0xffffff : 0xff8a3a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
@@ -665,7 +804,7 @@ export class Game {
     }
   }
 
-  private end(reason: EndReason) {
+  private end(reason: EndReason, origin?: WorldObject["origin"]) {
     this.state = "ending";
     this.reason = reason;
     this.endTimer = reason === "moon" ? 1 : 1.8;
@@ -675,7 +814,9 @@ export class Game {
       this.audio.explode();
       this.explode();
     }
-    const key = reason === "fuel" ? "nofuel" : reason === "moon" ? "moon" : reason === "balloon" ? "balloonCrash" : "crash";
+    const key = reason === "fuel" ? "nofuel" : reason === "moon" ? "moon" : reason === "balloon" ? "balloonCrash"
+      : origin === "debris" ? "kesslerCrash" : origin === "split" ? "splitCrash" : "crash";
+    this.hud.root.classList.remove("armed");
     this.quote = this.chatter.say(key, 3);
     this.cockpit.end(reason);
     if (reason !== "fuel" && reason !== "moon") {
@@ -702,6 +843,8 @@ export class Game {
       bestStreak: this.bestStreak,
       lastMilestone: this.lastMilestone,
       quote: this.quote,
+      shots: this.deflector.shots,
+      ...this.kills,
       test: !!this.test,
     });
   }
@@ -811,10 +954,11 @@ export class Game {
         const a = Math.max(0, f.life);
         f.obj.scale.setScalar(f.max * (1 - a / 1.4) + 2);
         ((f.obj as THREE.Sprite).material as THREE.SpriteMaterial).opacity = Math.min(1, a);
-        if (f.life <= 0) {
-          this.scene.remove(f.obj);
-          this.effects.splice(i, 1);
-        }
+      }
+      if (f.life <= 0) {
+        this.scene.remove(f.obj);
+        if (f.kind === "fire") ((f.obj as THREE.Sprite).material as THREE.SpriteMaterial).dispose();
+        this.effects.splice(i, 1);
       }
     }
     for (let i = this.clouds.length - 1; i >= 0; i--) {
@@ -923,6 +1067,10 @@ export class Game {
       // Almost no bloom in a close-up, so a sunlit panel stays readable.
       if (this.views.bloom) this.views.bloom.strength = this.site.focusedId ? 0.04 : 0.2;
     }
+    this.deflector.hud(
+      { reticle: this.hud.reticle, reticleLabel: this.hud.reticleLabel, pips: this.hud.deflectorPips },
+      cabinMain ? this.cabinCam : this.cam, this.container.clientWidth, this.container.clientHeight, this.state === "play",
+    );
     if (!counting) this.fade = Math.max(0, this.fade - realDt / 0.6);
     const fade = this.fade.toFixed(2);
     if (this.hudCache.fade !== fade) {
@@ -1009,12 +1157,24 @@ export class Game {
       const m = MILESTONES[this.milestoneIndex];
       this.lastMilestone = m.title;
       this.toast(m.title, m.detail);
-      if (m.km === 100) this.audio.karman();
+      if (m.km === 100) {
+        this.audio.karman();
+        if (!this.deflector.armed) this.armAt = this.t + 3.5;
+      }
       else this.audio.radioBlip();
       this.chatter.say(m.chatter, 2);
       this.cockpit.milestone(m.chatter);
       this.milestoneIndex++;
     }
+    if (this.armAt > 0 && this.t >= this.armAt) {
+      this.armAt = -1;
+      this.deflector.arm(false);
+      this.audio.deflectorArm();
+      this.hud.root.classList.add("armed");
+      this.armedSaid = false;
+    }
+    // Keep trying until the radio is free: the arming line is the feature's only tutorial.
+    if (!this.armedSaid) this.armedSaid = !!this.chatter.say("armed", 2);
     if (!this.tipSaid && this.t > 6 && this.runs <= 3) {
       this.tipSaid = true;
       this.chatter.say("tip", 1);
@@ -1022,6 +1182,7 @@ export class Game {
 
     for (let i = this.objects.length - 1; i >= 0; i--) {
       const o = this.objects[i], q = o.mesh.position;
+      if (o.vel) q.addScaledVector(o.vel, dt);
       if (q.z > sp.z + 14) {
         this.scene.remove(o.mesh);
         this.objects.splice(i, 1);
@@ -1051,11 +1212,14 @@ export class Game {
             this.objects.splice(i, 1);
           }
         } else if (d < o.radius + 0.55 && !this.test) {
-          this.end(o.type);
+          this.end(o.type, o.origin);
           return;
         }
       }
     }
+    const shot = this.deflector.update(dt, sp, vz, this.objects);
+    shot.hits.forEach((o) => this.deflected(o));
+    if (shot.misses) this.chatter.say("missShot", 1, 0.5);
     if (this.fuel <= 0) {
       this.fuel = 0;
       this.end("fuel");

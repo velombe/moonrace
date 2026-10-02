@@ -14,6 +14,24 @@ export const MAX_BOOST = 0.35; // near-miss surge multiplier
 export const FUEL_BURN = 1.8; // per second at speed 60
 export const FUEL_PICKUP = 30;
 
+// Deflector: shots are earned by flying close to things, never handed out.
+export const DEFLECTOR_ARM_KM = 100; // armed in space only (Kármán line)
+export const DEFLECTOR_SLOTS = 3; // stored shots
+export const CHARGE_CLOSE = 1 / 3; // slot fraction per close call
+export const CHARGE_RAZOR = 2 / 3; // per razor-thin pass
+export const CHARGE_STREAK = 1 / 6; // extra per streak step, capped so one pass never earns more than a slot
+export const DEFLECTOR_COOLDOWN = 1.5; // seconds between shots, even with charge left
+export const JUNK_CLEANUP_FUEL = 3; // "orbital cleanup" bonus
+export const SPLIT_RADIUS = 2.1; // asteroids at least this big split instead of shattering
+
+/**
+ * Most shots a run can fire: one free shot on arming plus at most one per near
+ * miss (CHARGE_RAZOR + capped streak bonus ≤ 1 slot). Shared with the server.
+ */
+export function maxShots(closeCalls: number): number {
+  return closeCalls + 1;
+}
+
 /** Maps game distance (units) to real-world kilometres from Earth. */
 export function kmAt(units: number): number {
   if (units < ATMOSPHERE_UNITS) return 100 * Math.pow(units / ATMOSPHERE_UNITS, 1.5);

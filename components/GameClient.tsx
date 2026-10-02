@@ -6,7 +6,7 @@ import { Game, type GameState, type HudRefs, type RunResult, type TestFlight } f
 import { END_REASON_TEXT, formatKm, formatPct } from "@/game/constants";
 import { LANDMARKS } from "@/game/moonAtlas";
 import { dayKey, daySeed } from "@/lib/daily";
-import { shareQuery } from "@/lib/share";
+import { deflectorSummary, shareQuery } from "@/lib/share";
 import { LocalSiteStore, type Planting, type SiteStore } from "@/lib/site";
 import SurfaceUI from "./SurfaceUI";
 
@@ -48,6 +48,13 @@ function readTestSurface(): boolean {
   return new URLSearchParams(location.search).get("test") === "surface";
 }
 
+/** End-screen line for the deflector: what it took out, or a dry note if every shot missed. */
+function deflectorLine(r: RunResult) {
+  const sum = deflectorSummary(r);
+  if (sum) return r.junk ? `${sum} · ${r.junk} junk cleared` : sum;
+  return r.junk ? `${r.junk} junk cleared` : `${r.shots} deflector shot${r.shots === 1 ? "" : "s"}, all missed`;
+}
+
 function readLocal(key: string, fallback = "") {
   try {
     return localStorage.getItem(key) ?? fallback;
@@ -73,7 +80,9 @@ export default function GameClient() {
     chat: useRef<HTMLDivElement>(null), chatWho: useRef<HTMLElement>(null), chatText: useRef<HTMLSpanElement>(null),
     fade: useRef<HTMLDivElement>(null), pip: useRef<HTMLButtonElement>(null), pipLabel: useRef<HTMLSpanElement>(null),
     moonAlt: useRef<HTMLSpanElement>(null),
+    reticle: useRef<HTMLDivElement>(null), reticleLabel: useRef<HTMLSpanElement>(null),
   };
+  const pipRefs = useRef<HTMLElement[]>([]);
   const markRefs = useRef<HTMLElement[]>([]);
   const siteLabelRefs = useRef<HTMLElement[]>([]);
   // Device-local for now; swap in a cloud SiteStore without touching the UI.
@@ -150,6 +159,9 @@ export default function GameClient() {
             km: res.km,
             durationMs: res.durationMs,
             closeCalls: res.closeCalls,
+            shots: res.shots,
+            asteroids: res.asteroids,
+            satellites: res.satellites,
             reason: res.reason,
             name: readLocal("moonrace-callsign"),
           }),
@@ -186,6 +198,7 @@ export default function GameClient() {
         fade: r.fade.current!, pip: r.pip.current!, pipLabel: r.pipLabel.current!,
         moonMarks: markRefs.current, moonAlt: r.moonAlt.current!,
         siteLabels: siteLabelRefs.current,
+        reticle: r.reticle.current!, reticleLabel: r.reticleLabel.current!, deflectorPips: pipRefs.current,
       };
       game = new Game(hostRef.current, hud, {
         onStateChange: (s) => setPhase(s),
@@ -292,6 +305,8 @@ export default function GameClient() {
       pct: result.pct,
       km: result.km,
       closeCalls: result.closeCalls,
+      asteroids: result.asteroids,
+      satellites: result.satellites,
       quote: result.quote?.text,
       speaker: result.quote?.speaker,
     })}`;
@@ -337,6 +352,14 @@ export default function GameClient() {
       </div>
       <div className="met hud-part"><small>Mission time</small><div className="num" ref={r.clock}>T+00:00</div></div>
       <div className="fuelbox hud-part">
+        <div className="deflector" aria-label="Deflector charge">
+          <small>Deflector</small>
+          <span className="pips">
+            {[0, 1, 2].map((i) => (
+              <i key={i} ref={(el) => { if (el) pipRefs.current[i] = el; }} />
+            ))}
+          </span>
+        </div>
         <small>Fuel</small>
         <div className="num" ref={r.fuelPct}>100%</div>
         <div className="fuel"><i ref={r.fuelBar} /></div>
@@ -348,6 +371,19 @@ export default function GameClient() {
       <div className="chat" ref={r.chat} aria-live="polite"><b ref={r.chatWho} /><span ref={r.chatText} /></div>
       <div className="toast" ref={r.toast} role="status"><strong ref={r.toastTitle} /><span ref={r.toastDetail} /></div>
       <div className="count num" ref={r.count} />
+      <div className="reticle" ref={r.reticle} aria-hidden="true"><span ref={r.reticleLabel} /></div>
+      <button
+        className="fire hud-part"
+        aria-label="Fire deflector"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          gameRef.current?.fire();
+        }}
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="7" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+        </svg>
+      </button>
 
       <button className="pip" ref={r.pip} aria-label="Swap camera view (C)" title="Swap camera (C)">
         <span className="pip-tag"><i className="pip-dot" aria-hidden="true" /><span ref={r.pipLabel}>Cabin cam</span></span>
@@ -488,6 +524,7 @@ export default function GameClient() {
                 ? `${result.closeCalls} close call${result.closeCalls === 1 ? "" : "s"}${result.bestStreak > 1 ? `, best streak ×${result.bestStreak}` : ""}`
                 : "No close calls. Playing it safe."}
             </p>
+            {result.shots > 0 && <p className="why">{deflectorLine(result)}</p>}
             <p className="rank">
               {submit.status === "sending" && "Adding you to today's board…"}
               {submit.status === "done" && (

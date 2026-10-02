@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { formatKm, formatPct } from "@/game/constants";
-import { parseShare, shareQuery } from "@/lib/share";
+import { deflectorSummary, parseShare, shareQuery } from "@/lib/share";
 
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 
@@ -25,7 +25,7 @@ export default async function SharePage({ searchParams }: Props) {
         <h1>{formatPct(s.pct)}</h1>
         <p style={{ fontSize: 20, color: "var(--ink)" }}>{s.pct >= 100 ? "They reached the Moon." : "of the way to the Moon"}</p>
         <p>
-          {formatKm(s.km)} km{s.closeCalls ? `, ${s.closeCalls} close calls` : ""}.
+          {formatKm(s.km)} km{s.closeCalls ? `, ${s.closeCalls} close calls` : ""}{deflectorSummary(s) ? `, ${deflectorSummary(s).replace(/ · /g, ", ")}` : ""}.
           {s.quote ? ` ${s.speaker || "Houston"}: “${s.quote}”` : ""}
         </p>
         <p style={{ marginTop: 32 }}><Link className="btn go" href="/">Try to beat it</Link></p>

@@ -60,6 +60,34 @@ button { font: inherit; }
 .nm strong { display: block; font-family: var(--display); font-weight: 300; font-size: clamp(36px, 7vw, 58px); line-height: 1; text-shadow: 0 0 26px rgba(255,179,71,.65); }
 .nm span { display: block; font-size: 15px; color: var(--flare); margin-top: 6px; white-space: pre; }
 .nm.razor strong { color: #fff3de; text-shadow: 0 0 34px rgba(255,200,120,.95); }
+.nm.hit strong { color: #eaf6ff; text-shadow: 0 0 30px rgba(150,210,255,.8); }
+.nm.hit span { color: #bfe0ff; }
+.nm.bad strong { color: #ffd4d8; text-shadow: 0 0 30px rgba(255,77,94,.85); }
+.nm.bad span { color: var(--signal); }
+
+/* Deflector: charge pips beside the fuel readout, lock reticle, touch fire button. */
+.deflector { position: absolute; left: 0; bottom: 11px; text-align: left; opacity: 0; transition: opacity .6s; }
+.stage.armed .deflector { opacity: 1; }
+.deflector small { margin-bottom: 5px; }
+.pips { display: flex; gap: 5px; }
+.pips i { --fill: 0; width: 20px; height: 6px; transform: skewX(-20deg); background: linear-gradient(to right, var(--flare) calc(var(--fill) * 100%), rgba(238,242,255,.16) 0); transition: box-shadow .3s, background .2s; }
+.pips i.full { box-shadow: 0 0 10px rgba(255,179,71,.75); }
+.pips i.hot { background: linear-gradient(to right, var(--signal) calc(var(--fill) * 100%), rgba(255,77,94,.18) 0); box-shadow: 0 0 10px rgba(255,77,94,.7); }
+.reticle { --s: 60px; position: absolute; left: 0; top: 0; width: var(--s); height: var(--s); pointer-events: none; opacity: 0; transition: opacity .15s, width .12s, height .12s; color: var(--flare); }
+.reticle.on { opacity: 1; }
+.reticle::before { content: ""; position: absolute; inset: 0; border: 1px solid currentColor; border-radius: 50%; opacity: .85; box-shadow: 0 0 10px rgba(255,179,71,.35); }
+.reticle::after { content: ""; position: absolute; inset: -6px; background:
+  linear-gradient(currentColor, currentColor) 50% 0 / 1px 8px no-repeat, linear-gradient(currentColor, currentColor) 50% 100% / 1px 8px no-repeat,
+  linear-gradient(currentColor, currentColor) 0 50% / 8px 1px no-repeat, linear-gradient(currentColor, currentColor) 100% 50% / 8px 1px no-repeat; }
+.reticle span { position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%); font-family: var(--display); font-weight: 500; font-size: 12px; letter-spacing: .06em; white-space: nowrap; text-shadow: 0 1px 6px rgba(0,0,0,.9); }
+.reticle.hot { opacity: .4; }
+.reticle.sat { color: var(--signal); }
+.reticle.sat::before { box-shadow: 0 0 10px rgba(255,77,94,.45); }
+.fire { --pip-w: clamp(150px, 22vw, 300px); display: none; position: absolute; right: 22px; width: 64px; height: 64px; border-radius: 50%; border: 1px solid rgba(255,179,71,.6); background: rgba(2,4,11,.45); color: var(--flare); align-items: center; justify-content: center; touch-action: none; -webkit-tap-highlight-color: transparent; }
+.fire:active { background: rgba(255,179,71,.25); }
+@media (pointer: coarse) {
+  .stage.armed.playing .fire { display: flex; bottom: calc(92px + var(--pip-w) * 10 / 16 + 14px + env(safe-area-inset-bottom, 0px)); }
+}
 .nm.pop { animation: nmPop 1.15s ease-out forwards; }
 @keyframes nmPop {
   0% { opacity: 0; transform: translate(calc(-50% + var(--dx)), -35%) scale(.8); }
@@ -233,6 +261,8 @@ button.site-label:hover { color: var(--flare); }
   .toast { left: 16px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
   .toast strong { font-size: 24px; }
   .pip { --pip-w: 128px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+  .fire { --pip-w: 128px; right: 16px; }
+  .stage.armed.playing .fire { bottom: calc(84px + var(--pip-w) * 10 / 16 + 14px + env(safe-area-inset-bottom, 0px)); }
   .stage.pip-on .toast { --pip-w: 128px; }
   .skip { bottom: calc(196px + env(safe-area-inset-bottom, 0px)); }
   .obs-top { left: 16px; right: 70px; flex-direction: column; gap: 10px; }
@@ -252,6 +282,7 @@ button.site-label:hover { color: var(--flare); }
   .nm.pop { animation-duration: 1.4s; }
   .edge.flash { animation: none; }
   .pip, .stage.pip-on .pip { transition: none; }
+  .reticle, .deflector, .pips i { transition: none; }
   .pip-dot, .pip.lost .pip-lost { animation: none; }
   .site-title { animation: siteTitleStill 5s steps(1, end) forwards; }
 }

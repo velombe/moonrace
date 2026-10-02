@@ -11,6 +11,10 @@ export interface WorldObject {
   type: ObstacleType;
   spin: THREE.Vector3;
   passed: boolean;
+  /** Drift (units/s), for pieces the deflector knocked loose. */
+  vel?: THREE.Vector3;
+  /** Made by the player's own shot: split asteroid fragments or satellite debris. */
+  origin?: "split" | "debris";
 }
 
 export const LANE_X = 13;
@@ -118,6 +122,52 @@ export class ObjectFactory {
     this.place(g, z, rng, ship);
     if (type !== "balloon") g.rotation.set(rng.range(0, 6), rng.range(0, 6), rng.range(0, 6));
     return { mesh: g, radius, type, spin, passed: false };
+  }
+
+  /**
+   * A big asteroid split by the deflector: 2–3 smaller, faster rocks flung
+   * sideways and toward the ship. `rng` is a per-run stream separate from the
+   * layout's, so shooting never changes what everyone else meets.
+   */
+  fragments(parent: WorldObject, rng: Rng): WorldObject[] {
+    const n = 2 + rng.int(2), out: WorldObject[] = [];
+    const s0 = parent.radius / 0.85;
+    for (let i = 0; i < n; i++) {
+      const s = s0 * rng.range(0.42, 0.58);
+      const g = new THREE.Group();
+      const a = new THREE.Mesh(this.rocks[rng.int(4)], this.mat.rock); a.scale.set(s, s * rng.range(0.7, 1), s * rng.range(0.8, 1.1));
+      g.add(a);
+      const ang = (i / n) * Math.PI * 2 + rng.range(-0.5, 0.5);
+      g.position.copy(parent.mesh.position).add(new THREE.Vector3(Math.cos(ang), Math.sin(ang), 0).multiplyScalar(s0 * 0.5));
+      g.rotation.set(rng.range(0, 6), rng.range(0, 6), rng.range(0, 6));
+      const vel = new THREE.Vector3(Math.cos(ang) * rng.range(3, 7), Math.sin(ang) * rng.range(2, 5), rng.range(12, 26));
+      out.push({ mesh: g, radius: s * 0.85, type: "asteroid", spin: new THREE.Vector3(rng.range(-2, 2), rng.range(-2, 2), rng.range(-2, 2)), passed: false, vel, origin: "split" });
+    }
+    return out;
+  }
+
+  /** What's left of a satellite: a spreading cloud of small debris (Kessler, but playful). */
+  debris(parent: WorldObject, rng: Rng): WorldObject[] {
+    const n = 6 + rng.int(3), out: WorldObject[] = [];
+    for (let i = 0; i < n; i++) {
+      const s = rng.range(0.35, 0.7);
+      const g = new THREE.Group();
+      const j = new THREE.Mesh(i % 3 === 0 ? this.geo.panel : this.geo.junk, i % 3 === 0 ? this.mat.panel : i % 2 ? this.mat.gold : this.mat.junk);
+      if (i % 3 === 0) j.scale.set(0.3, 1, 0.5);
+      else j.scale.set(s, s * rng.range(0.4, 1), s);
+      g.add(j);
+      const ang = rng.range(0, Math.PI * 2), out2 = rng.range(2.5, 7);
+      g.position.copy(parent.mesh.position);
+      g.rotation.set(rng.range(0, 6), rng.range(0, 6), rng.range(0, 6));
+      const vel = new THREE.Vector3(Math.cos(ang) * out2, Math.sin(ang) * out2 * 0.7, rng.range(4, 16));
+      out.push({ mesh: g, radius: i % 3 === 0 ? 0.75 : s * 0.95, type: "junk", spin: new THREE.Vector3(rng.range(-3, 3), rng.range(-3, 3), rng.range(-3, 3)), passed: false, vel, origin: "debris" });
+    }
+    return out;
+  }
+
+  /** Material for the chips that fly off a deflector hit. */
+  chips(type: ObstacleType) {
+    return type === "asteroid" ? this.mat.rock : type === "satellite" ? this.mat.gold : this.mat.junk;
   }
 
   fuel(z: number, rng: Rng): WorldObject {

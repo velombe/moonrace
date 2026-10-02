@@ -33,5 +33,15 @@ export const LINES: Record<string, Line[]> = {
   touchdown: ["Contact. You're on the Moon. Somebody tell the website.", "Touchdown confirmed. The whole room just stood up.", "The rocket has landed. Upright, even. We're impressed."],
   planted: ["Flag's up. History books, take note.", "Nice flag. It's not waving, by the way. No air. That's normal."],
   plaque: ["Lovely panel. Very official. Very you.", "Panel installed. Future tourists will read that."],
+  armed: ["Deflector armed. Fly close to things to charge it. Yes, really.", "Planetary defense is online. Rocks, yes. Satellites, please no.", "You now have a deflector. Legal asked us to stop calling it a gun."],
+  notAuthorized: ["Weapons are not authorized in civilian airspace. Also, those are weather balloons.", "Negative on firing, pilot. Wait for space. And a reason."],
+  asteroidHit: ["DART would be proud.", "Asteroid deflected. Planetary defense one, rocks zero.", "That rock had it coming."],
+  asteroidSplit: ["You made more asteroids. That's the opposite of the job.", "Great. Now there are several of them.", "Technically that's fewer big asteroids."],
+  junkHit: ["Orbital cleanup. Somebody get this pilot a broom.", "One less piece of junk. A few million to go."],
+  satHit: ["That was somebody's weather forecast.", "Congratulations, you've ended GPS for a continent.", "Please tell me that wasn't a satellite. That was a satellite.", "Somebody's TV just went out. Somebody's whole country's TV."],
+  missShot: ["Missed. Space is big. That's kind of the point of space.", "That shot will hit something in about a million years."],
+  overheat: ["Deflector's still hot. Give it a second.", "Easy on the trigger. It's a deflector, not a disco."],
+  kesslerCrash: ["Taken out by your own satellite debris. Poetic, really.", "You shot a satellite and the satellite shot back."],
+  splitCrash: ["Hit by an asteroid you made yourself. Bold.", "You split that rock and it remembered."],
 };
 

@@ -60,6 +60,7 @@ game/                       FRAMEWORK-FREE ENGINE (no React imports, ever)
   surface/LandingSite.ts    the landing zone up close: descent, walk spots, plantings, dust
   surface/terrain.ts        deterministic metre-scale terrain, craters, rocks, regolith textures
   surface/plantings.ts      Planting type, flag/panel meshes, drawPanel() (shared with the UI)
+  deflector.ts              Deflector: charge, cooldown, aim-assist lock, bolts, reticle/pips HUD
   chatter.ts                Chatter class: priority, cooldown, subtitles, Quindar, voice
   rng.ts                    seeded Rng (gameplay) + fx (visual-only Math.random)
   views.ts                  ViewRenderer: main view + picture-in-picture, both via OutputPass
@@ -162,6 +163,19 @@ When an obstacle passes the ship (`q.z > ship.z`, checked once via `passed`), ed
 - Slow motion (time scale 0.3 → 1 over ~0.95 s, with audio lowpass "whomp") on razor-thin or streak ≥ 3, with 1.6 s cooldown.
 - End screen shows close calls and best streak; included in share links.
 
+### Deflector
+
+Shooting is earned by flying dangerously, so it feeds the near-miss system instead of replacing it. Numbers in `constants.ts`; logic in `game/deflector.ts`; consequences in `Game.deflected()`.
+
+- **Armed in space only:** 3.5 s after the Kármán line (after the quiet moment) with one free shot, a charging sound and the "armed" line (retried until the radio is free; it's the only tutorial). Firing below 100 km gets the "not authorized … weather balloons" line once.
+- **Charge:** 3 slots. Close call +1/3, razor +2/3, +1/6 per streak step; one pass never earns more than a slot (the server relies on this). 1.5 s cooldown between shots (pips glow red).
+- **Aim assist:** locks the nearest asteroid/junk/satellite 16–320 units ahead in a narrow cone (sticky). Reticle is amber, red with a "Satellite" label on satellites. Never locks fuel or balloons; bolts pass through fuel. Unlocked shots go straight ahead; a shot that hits nothing is a miss.
+- **Controls:** click or Space on desktop; on touch, the fire button above the PiP (`.fire`, coarse pointers only) or a second finger while the first steers.
+- **Outcomes:** small asteroids shatter; asteroids with radius ≥ `SPLIT_RADIUS` split into 2–3 faster fragments (+ a short slow-mo beat); junk vaporizes (+3 fuel, "Orbital cleanup"); satellites become a spreading debris cloud and Houston gets cross (priority 2.5, so it beats milestone chatter). Crashing into your own fragments/debris has its own ending lines (`splitCrash`, `kesslerCrash`). A destroyed obstacle gives no near-miss reward.
+- **Fairness:** fragments and debris use `debrisRng` (seeded from the run seed but separate from `rng`), so shooting never changes the daily layout for anyone else. Leaderboard is still distance only.
+- **Stats:** `RunResult.shots / asteroids / satellites / junk`. End screen shows them; share links carry `ad` (asteroids) and `sd` (satellites, the shame stat, red on the share card).
+- Test flights that start past 100 km begin armed and fully charged.
+
 ### Milestones
 
 Defined in `MILESTONES` (km, title, detail, chatter key): 11, 50, 100 (Kármán line), 408 (ISS), 2,000, 20,200 (GPS), 35,786 (GEO), 100,000, 192,200 (halfway), 300,000, 370,000. Each shows a lower-third toast and triggers chatter. Kármán line also triggers the audio "silence" moment.
@@ -203,6 +217,7 @@ All synthesized in `AudioEngine` (no files):
 
 - **Run tokens** (`lib/token.ts`): HMAC-SHA256 over `{ runId, seed, day, iat }`. Issued before a run; the client prefetches one so Launch starts instantly.
 - **Validation** (`lib/validate.ts`) rejects: invalid reason or numbers; token older than 2 h; `durationMs > elapsed since issue + 2 s`; `km > kmAt(maxUnitsIn(duration)) * 1.01 + 1`; Moon claim without full distance; implausible close-call counts.
+- Deflector stats (optional fields, older clients omit them): `shots ≤ maxShots(closeCalls)` (= close calls + 1) and `asteroids + satellites ≤ shots`.
 - **Replay protection:** `claimRun(runId)` (Redis `SET NX`). **Rate limit:** 20 finishes/min/IP.
 - **Storage keys (Redis):** `board:<day>` sorted set (score = km), `run:<runId>` JSON, `runs:<day>` counter, `moon:first`, `used:<runId>`, `rl:*`. Day data expires after 8 days.
 - **Names:** `cleanName()` keeps letters, digits, space, `_ . -`, max 18 chars, default "Anonymous pilot".
@@ -212,7 +227,7 @@ All synthesized in `AudioEngine` (no files):
 
 ## Sharing
 
-- Share URL: `/share?p=<pct>&km=<km>&cc=<closeCalls>&q=<quote>&w=<speaker>`.
+- Share URL: `/share?p=<pct>&km=<km>&cc=<closeCalls>&ad=<asteroids>&sd=<satellites>&q=<quote>&w=<speaker>` (`ad`/`sd` only when non-zero; `deflectorSummary()` formats them).
 - `/share` sets OG/Twitter metadata pointing at `/api/og?...`; its page shows the result and a "Try to beat it" button.
 - `navigator.share` on mobile; clipboard fallback on desktop.
 - Local best stored as `moonrace-best`; callsign as `moonrace-callsign`.

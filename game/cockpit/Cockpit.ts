@@ -209,6 +209,19 @@ export class Cockpit {
     if (razor && Math.random() < 0.6) this.pending = { name: "wipe", at: this.time + 0.45 };
   }
 
+  /** Deflector shot: a jolt and a flash through the window. */
+  fire() {
+    this.kick = Math.max(this.kick, 0.35);
+    this.flash.position.set(0, 1.5, -1.4);
+    this.flash.intensity = 2 * Math.PI;
+  }
+
+  /** Reaction to what the deflector hit. */
+  deflectorHit(kind: "asteroid" | "split" | "junk" | "satellite") {
+    if (kind === "satellite") this.pending = { name: "shrug", at: this.time + 0.5 };
+    else if (kind === "asteroid" && Math.random() < 0.4) this.pilot.play("thumbs");
+  }
+
   pickup() {
     if (Math.random() < 0.45) this.pilot.play("thumbs");
   }
