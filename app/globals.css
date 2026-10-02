@@ -143,6 +143,14 @@ button { font: inherit; }
 .site-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .site-label { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 6px; transform: translate(-200px, -200px); opacity: 0; font-family: var(--display); font-weight: 500; font-size: 14px; white-space: nowrap; translate: -50% -100%; text-shadow: 0 1px 6px rgba(0,0,0,.95); will-change: transform; }
 .site-label img { width: 18px; height: 13px; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+button.site-label { background: none; border: 0; padding: 6px 8px; color: var(--ink); cursor: pointer; pointer-events: none; }
+button.site-label:hover { color: var(--flare); }
+.focus-card { position: absolute; right: 22px; top: calc(96px + env(safe-area-inset-top, 0px)); width: min(340px, calc(100% - 44px)); padding: 16px 20px; background: rgba(2,4,11,.72); border-left: 2px solid var(--flare); backdrop-filter: blur(6px); }
+.focus-card small { font-size: 12px; color: var(--flare); letter-spacing: .04em; }
+.focus-card h3 { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 300; font-size: 30px; line-height: 1.05; margin: 2px 28px 6px 0; overflow-wrap: anywhere; }
+.focus-card h3 img { width: 30px; height: 22px; flex: none; box-shadow: 0 0 0 1px rgba(255,255,255,.2); }
+.focus-card p { margin: 0 0 12px; font-size: 14px; color: var(--haze); }
+.focus-nav { display: flex; gap: 8px; flex-wrap: wrap; }
 .landing-hint { position: absolute; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); margin: 0; font-size: 13px; color: var(--haze); white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,.8); pointer-events: none; }
 .site-title { position: absolute; top: calc(24px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); width: min(560px, calc(100% - 140px)); text-align: center; pointer-events: none; animation: siteTitle 6s ease-out forwards; }
 .site-title h2 { font-family: var(--display); font-weight: 200; font-size: clamp(36px, 7vw, 60px); line-height: 1; margin: 0 0 8px; text-shadow: 0 2px 24px rgba(0,0,0,.7); }
@@ -236,6 +244,7 @@ button { font: inherit; }
   .sheet-wrap { align-items: flex-end; }
   .sheet { height: auto; max-height: 92%; border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; }
   .flag-grid { grid-template-columns: repeat(2, 1fr); max-height: 200px; }
+  .focus-card { left: 16px; right: 16px; width: auto; top: auto; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
   .mk { font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {

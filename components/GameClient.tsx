@@ -101,6 +101,8 @@ export default function GameClient() {
   const [plantings, setPlantings] = useState<Planting[]>([]);
   const [planted, setPlanted] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
+  const [mine, setMine] = useState<string[]>([]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -187,6 +189,7 @@ export default function GameClient() {
       };
       game = new Game(hostRef.current, hud, {
         onStateChange: (s) => setPhase(s),
+        onFocusPlanting: (id) => setFocused(id),
         onGameOver: (res) => void handleGameOver(res),
       });
       gameRef.current = game;
@@ -244,7 +247,9 @@ export default function GameClient() {
     if (phase === "landing") {
       setPlanted(false);
       setShowReport(false);
+      setMine([]);
     }
+    if (phase !== "surface") setFocused(null);
   }, [phase]);
 
   // The landing site shows every planting we know about.
@@ -513,7 +518,14 @@ export default function GameClient() {
           plantings={plantings}
           onPlanted={(p) => {
             setPlanted(true);
+            setMine((ids) => [...ids, p.id]);
+            setFocused(null);
             setPlantings((list) => [...list, p]);
+          }}
+          focused={focused}
+          mine={mine}
+          onFocus={(id) => {
+            if (gameRef.current?.focusPlanting(id)) setFocused(id);
           }}
           labelRefs={siteLabelRefs}
           callsign={callsign}

@@ -76,6 +76,8 @@ export interface RunResult {
 
 export interface GameEvents {
   onStateChange?: (s: GameState) => void;
+  /** A flag or panel was tapped at the landing site (id), or the close-up was left by tapping away (null). */
+  onFocusPlanting?: (id: string | null) => void;
   onGameOver: (r: RunResult) => void;
 }
 
@@ -381,6 +383,16 @@ export class Game {
     this.site?.walkTo(id);
   }
 
+  /** Walk up to a planting for a close look (id), or step back (null). Returns false if it can't. */
+  focusPlanting(id: string | null) {
+    if (!this.site || this.state !== "surface") return false;
+    if (id === null) {
+      this.site.unfocus();
+      return true;
+    }
+    return this.site.focus(id);
+  }
+
   /** Straight to the landing site, for testing (?test=surface). Call from a user gesture. */
   landTest() {
     if (this.state !== "title") return;
@@ -485,7 +497,16 @@ export class Game {
     };
     const onUp = (e: PointerEvent) => {
       this.observatory?.pointerUp(e);
-      this.site?.pointerUp(e);
+      const site = this.site;
+      if (site) {
+        const hit = site.pointerUp(e, el.getBoundingClientRect());
+        if (this.state === "surface" && hit) {
+          if (site.focus(hit)) this.events.onFocusPlanting?.(hit);
+        } else if (this.state === "surface" && hit === "" && site.focusedId) {
+          site.unfocus();
+          this.events.onFocusPlanting?.(null);
+        }
+      }
       if (e.pointerId === this.touchId) this.touchId = null;
     };
     const onWheel = (e: WheelEvent) => {
@@ -893,7 +914,8 @@ export class Game {
     }
     if ((this.state === "landing" || this.state === "surface") && this.site) {
       main = this.site.view;
-      if (this.views.bloom) this.views.bloom.strength = 0.2;
+      // Almost no bloom in a close-up, so a sunlit panel stays readable.
+      if (this.views.bloom) this.views.bloom.strength = this.site.focusedId ? 0.04 : 0.2;
     }
     if (!counting) this.fade = Math.max(0, this.fade - realDt / 0.6);
     const fade = this.fade.toFixed(2);

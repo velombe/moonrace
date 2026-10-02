@@ -21,12 +21,17 @@ interface Props {
   canPlant: boolean;
   onReport: (() => void) | null;
   onLaunch: () => void;
+  /** The planting being viewed up close. */
+  focused: string | null;
+  /** What this pilot planted on this landing, to mark it as theirs. */
+  mine: string[];
+  onFocus: (id: string | null) => void;
 }
 
 type Kind = "flag" | "panel";
 
 /** Everything on screen while standing at the landing site. */
-export default function SurfaceUI({ phase, game, store, plantings, onPlanted, labelRefs, callsign, canPlant, onReport, onLaunch }: Props) {
+export default function SurfaceUI({ phase, game, store, plantings, onPlanted, labelRefs, callsign, canPlant, onReport, onLaunch, focused, mine, onFocus }: Props) {
   const [spot, setSpot] = useState<SpotId>("lander");
   const [sheet, setSheet] = useState<Kind | null>(null);
   const [name, setName] = useState("");
@@ -37,8 +42,10 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
   const [busy, setBusy] = useState(false);
   const preview = useRef<HTMLCanvasElement>(null);
   const walking = phase === "surface";
+  const focusedItem = plantings.find((p) => p.id === focused) ?? null;
 
   const open = (k: Kind) => {
+    onFocus(null);
     setSheet(k);
     setName(callsign);
     setCountry(null);
@@ -46,6 +53,13 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
     setQuery("");
     setError("");
   };
+
+  useEffect(() => {
+    if (sheet || !focused) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onFocus(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sheet, focused, onFocus]);
 
   useEffect(() => {
     if (!sheet) return;
@@ -103,10 +117,17 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
     <>
       <div className="site-labels" aria-hidden="true">
         {plantings.map((p, i) => (
-          <span key={p.id} className="site-label" ref={(el) => { if (el) labelRefs.current[i] = el; }}>
+          <button
+            key={p.id}
+            className="site-label"
+            ref={(el) => { if (el) labelRefs.current[i] = el; }}
+            onClick={() => onFocus(p.id)}
+            tabIndex={-1}
+            aria-label={`Look at ${p.kind === "flag" ? "flag" : "panel"}: ${p.name}`}
+          >
             {p.country && <img src={plantingAssets.flagUrl(p.country)} alt="" />}
             {p.name}
-          </span>
+          </button>
         ))}
       </div>
 
@@ -122,7 +143,7 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
           <div className="site-bar">
             <nav className="site-spots" aria-label="Walk to">
               {SPOTS.map((s) => (
-                <button key={s.id} className={`chip${spot === s.id ? " on" : ""}`} onClick={() => { setSpot(s.id); game?.walkTo(s.id); }}>{s.name}</button>
+                <button key={s.id} className={`chip${spot === s.id && !focused ? " on" : ""}`} onClick={() => { setSpot(s.id); onFocus(null); game?.walkTo(s.id); }}>{s.name}</button>
               ))}
             </nav>
             <div className="site-actions">
@@ -131,8 +152,18 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
               {onReport && <button className="btn ghost slim" onClick={onReport}>Mission report</button>}
               <button className="btn ghost slim" onClick={onLaunch}>Launch again</button>
             </div>
-            <p className="site-help">Drag to look around · {plantings.length ? `${plantings.length} planted here so far` : "Nobody has planted anything here yet"}</p>
+            <p className="site-help">Drag to look around · {plantings.length ? `Tap a flag or panel for a closer look · ${plantings.length} planted here` : "Nobody has planted anything here yet"}</p>
           </div>
+          {focusedItem && (
+            <FocusCard
+              item={focusedItem}
+              index={plantings.indexOf(focusedItem)}
+              total={plantings.length}
+              mine={mine.includes(focusedItem.id)}
+              onStep={(d) => onFocus(plantings[(plantings.indexOf(focusedItem) + d + plantings.length) % plantings.length].id)}
+              onClose={() => onFocus(null)}
+            />
+          )}
         </>
       )}
 
@@ -195,5 +226,39 @@ export default function SurfaceUI({ phase, game, store, plantings, onPlanted, la
         </div>
       )}
     </>
+  );
+}
+
+/** Close-up card for the flag or panel in view, with browsing through the field. */
+function FocusCard({ item, index, total, mine, onStep, onClose }: {
+  item: Planting;
+  index: number;
+  total: number;
+  mine: boolean;
+  onStep: (d: number) => void;
+  onClose: () => void;
+}) {
+  const date = new Date(item.createdAt).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" });
+  const country = item.country ? COUNTRY_NAME.get(item.country) : null;
+  return (
+    <article className="focus-card" aria-live="polite">
+      <button className="obs-x" onClick={onClose} aria-label="Step back">×</button>
+      <small>
+        {mine ? (item.kind === "flag" ? "Your flag" : "Your panel") : item.kind === "flag" ? "Flag" : "Panel"}
+        {total > 1 && ` · ${index + 1} of ${total}`}
+      </small>
+      <h3>
+        {item.country && <img src={plantingAssets.flagUrl(item.country)} alt="" />}
+        {item.name}
+      </h3>
+      <p>
+        {country ? `${country} · ` : item.kind === "flag" ? "moonrace.lol flag · " : ""}Planted {date}
+      </p>
+      <div className="focus-nav">
+        {total > 1 && <button className="btn ghost slim" onClick={() => onStep(-1)}>‹ Previous</button>}
+        {total > 1 && <button className="btn ghost slim" onClick={() => onStep(1)}>Next ›</button>}
+        <button className="btn ghost slim" onClick={onClose}>Step back</button>
+      </div>
+    </article>
   );
 }

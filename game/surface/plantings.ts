@@ -133,6 +133,43 @@ function nameTag(name: string) {
 const metal = new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.35, metalness: 0.85 });
 
 /** Apollo-style flag: no wind on the Moon, so a crossbar holds the cloth out, crinkles and all. */
+/**
+ * Close-up reading mode for the printed face (flag cloth, panel plate): evenly
+ * lit at a fixed brightness, so the sun can't glare or wash it out from any
+ * angle. `false` puts the normal sunlit finish back.
+ */
+export function setMatte(g: THREE.Object3D, matte: boolean) {
+  g.traverse((o) => {
+    const m = (o as THREE.Mesh).material;
+    for (const mat of Array.isArray(m) ? m : m ? [m] : []) {
+      if (!(mat instanceof THREE.MeshStandardMaterial) || !mat.userData.face) continue;
+      if (matte && !mat.userData.finish) {
+        mat.userData.finish = {
+          roughness: mat.roughness, metalness: mat.metalness, color: mat.color.clone(),
+          emissive: mat.emissive.clone(), emissiveMap: mat.emissiveMap, emissiveIntensity: mat.emissiveIntensity,
+        };
+        mat.roughness = 1;
+        mat.metalness = 0;
+        mat.color.set(0x000000);
+        mat.emissive.set(0xffffff);
+        mat.emissiveMap = mat.map;
+        mat.emissiveIntensity = 0.82;
+        mat.needsUpdate = true;
+      } else if (!matte && mat.userData.finish) {
+        const f = mat.userData.finish;
+        mat.roughness = f.roughness;
+        mat.metalness = f.metalness;
+        mat.color.copy(f.color);
+        mat.emissive.copy(f.emissive);
+        mat.emissiveMap = f.emissiveMap;
+        mat.emissiveIntensity = f.emissiveIntensity;
+        mat.needsUpdate = true;
+        delete mat.userData.finish;
+      }
+    }
+  });
+}
+
 export function makeFlag(p: Planting) {
   const g = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 2.4, 10), metal);
@@ -152,7 +189,9 @@ export function makeFlag(p: Planting) {
   const { c, ctx } = canvas(512, 344);
   drawFlag(ctx, 512, 344, null);
   const tex = colorTex(c);
-  const cloth = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: 0.85 }));
+  const clothMat = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: 0.85 });
+  clothMat.userData.face = true;
+  const cloth = new THREE.Mesh(geo, clothMat);
   if (p.country) {
     void loadImage(plantingAssets.flagUrl(p.country)).then((img) => {
       if (!img) return;
@@ -188,13 +227,15 @@ export function makePanel(p: Planting) {
     draw();
   });
   const face = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.45, metalness: 0.55 });
+  face.userData.face = true;
   const plate = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.69, 0.025), [metal, metal, metal, metal, face, metal]);
   plate.position.y = 0.72;
   plate.rotation.x = -0.45;
   g.add(plate);
   for (const sx of [-0.38, 0.38]) {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.72, 8), metal);
-    leg.position.set(sx, 0.36, 0.08);
+    // Behind the plate: it tilts back, so legs in front would poke through its face.
+    leg.position.set(sx, 0.36, -0.12);
     g.add(leg);
   }
   g.traverse((o) => (o.castShadow = o.receiveShadow = true));

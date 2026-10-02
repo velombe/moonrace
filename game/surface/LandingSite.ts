@@ -3,7 +3,7 @@ import type { View } from "../views";
 import { EXTERIOR_LAYER, createRocket } from "../world/rocket";
 import { createStars } from "../world/sky";
 import { canvas, colorTex } from "../world/textures";
-import { makeFlag, makePanel, type Planting } from "./plantings";
+import { makeFlag, makePanel, setMatte, type Planting } from "./plantings";
 import { Terrain } from "./terrain";
 
 // Site layout in metres: x east, z south, lander at the origin. Earth hangs
@@ -18,6 +18,10 @@ const LANDER_SCALE = 7.5;
 const LEG_SPAN = 7;
 const EYE = 1.62;
 const MOON_G = 1.62;
+const WALK_FOV = 62;
+/** A press that moves less than this (px) and lasts less than TAP_MS counts as a tap, not a look-drag. */
+const TAP_PX = 8;
+const TAP_MS = 450;
 const WALK_SPEED = 3;
 /** Seconds from the start of the descent to touchdown, and to the cut to first person. */
 const TOUCHDOWN = 5.6;
@@ -85,6 +89,16 @@ export class LandingSite {
   private dragging = new Map<number, { x: number; y: number }>();
   private userLook = false;
   private camShake = 0;
+  /** The planting being looked at up close, if any. */
+  private focused: string | null = null;
+  /** Close-up framing to apply on arrival: item size (m), kneel depth, and what to look at. */
+  private focusArrive: { w: number; h: number; crouch: number; target: [number, number, number] } | null = null;
+  private fovNow = WALK_FOV;
+  private fovTarget = WALK_FOV;
+  private crouch = 0;
+  private crouchTarget = 0;
+  private press = new Map<number, { x: number; y: number; t: number; moved: number }>();
+  private ray = new THREE.Raycaster();
   private tmp = new THREE.Vector3();
 
   constructor(glowTex: THREE.Texture, earth: THREE.Object3D, lowEnd: boolean) {
@@ -146,6 +160,9 @@ export class LandingSite {
     this.camShake = 0;
     this.pending = null;
     this.path = [];
+    this.unfocus();
+    this.crouch = 0;
+    this.fovNow = WALK_FOV;
     this.walker.set(SPOTS[0].x, SPOTS[0].z);
     this.placeLander(140);
   }
@@ -189,6 +206,7 @@ export class LandingSite {
   /** Walks up to the next free slot in the flag field and plants it in front of you. */
   plant(p: Planting) {
     if (this.mode !== "walk") return;
+    this.unfocus();
     this.pending = p;
     const slot = this.slot(this.items.length), view = SPOTS[1];
     const away = new THREE.Vector2(view.x - slot.x, view.z - slot.y).normalize();
@@ -198,7 +216,45 @@ export class LandingSite {
 
   walkTo(id: SpotId) {
     const spot = SPOTS.find((s) => s.id === id);
-    if (spot && this.mode === "walk") this.walkToPoint(new THREE.Vector2(spot.x, spot.z), spot.look);
+    if (!spot || this.mode !== "walk") return;
+    this.unfocus();
+    this.walkToPoint(new THREE.Vector2(spot.x, spot.z), spot.look);
+  }
+
+  get focusedId() {
+    return this.focused;
+  }
+
+  /**
+   * Walks up to a flag or panel and frames it: kneel and zoom for a panel so
+   * it can be read, zoom on the cloth for a flag. Returns false if not found.
+   */
+  focus(id: string) {
+    const it = this.items.find((x) => x.p.id === id);
+    if (!it || this.mode !== "walk" || this.pending) return false;
+    const g = it.g, r = g.rotation.y, panel = it.p.kind === "panel";
+    // Plantings face local +Z; stand in front of that.
+    const front = new THREE.Vector2(Math.sin(r), Math.cos(r));
+    const stand = new THREE.Vector2(g.position.x, g.position.z).addScaledVector(front, panel ? 1.45 : 1.9);
+    const target: [number, number, number] = panel
+      ? [g.position.x, g.position.y + 0.72, g.position.z]
+      : [g.position.x + Math.cos(r) * 0.47, g.position.y + 1.98, g.position.z - Math.sin(r) * 0.47];
+    this.unfocus();
+    this.focused = id;
+    setMatte(g, true);
+    this.walkToPoint(stand, target);
+    this.focusArrive = { w: panel ? 1.1 : 0.92, h: panel ? 0.62 : 0.62, crouch: panel ? 0.38 : 0, target };
+    return true;
+  }
+
+  /** Back to the normal standing view. */
+  unfocus() {
+    const it = this.items.find((x) => x.p.id === this.focused);
+    if (it) setMatte(it.g, false);
+    this.focused = null;
+    this.focusArrive = null;
+    this.fovTarget = WALK_FOV;
+    this.crouchTarget = 0;
   }
 
   private walkToPoint(to: THREE.Vector2, look: [number, number, number]) {
@@ -223,12 +279,16 @@ export class LandingSite {
 
   pointerDown(e: PointerEvent) {
     this.dragging.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.press.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 });
   }
 
   pointerMove(e: PointerEvent, height: number) {
     const p = this.dragging.get(e.pointerId);
     if (!p || this.mode !== "walk") return;
     const k = 2.4 / Math.max(300, height);
+    const pr = this.press.get(e.pointerId);
+    if (pr) pr.moved = Math.max(pr.moved, Math.hypot(e.clientX - pr.x, e.clientY - pr.y));
+    if (pr && pr.moved < TAP_PX) return;
     this.tYaw += (e.clientX - p.x) * k;
     this.tPitch = THREE.MathUtils.clamp(this.tPitch + (e.clientY - p.y) * k, -1.1, 1.1);
     p.x = e.clientX;
@@ -236,8 +296,28 @@ export class LandingSite {
     this.userLook = true;
   }
 
-  pointerUp(e: PointerEvent) {
+  /**
+   * Ends a press. A tap returns what it hit: a planting's id, "" for empty
+   * ground, or null if it wasn't a tap (a drag, or not walking).
+   */
+  pointerUp(e: PointerEvent, rect: DOMRect): string | null {
     this.dragging.delete(e.pointerId);
+    const pr = this.press.get(e.pointerId);
+    this.press.delete(e.pointerId);
+    if (!pr || this.mode !== "walk" || pr.moved >= TAP_PX || performance.now() - pr.t > TAP_MS) return null;
+    return this.pick(e.clientX, e.clientY, rect);
+  }
+
+  private pick(x: number, y: number, rect: DOMRect) {
+    const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.camera);
+    this.ray.far = 40;
+    let best: { id: string; d: number } | null = null;
+    for (const it of this.items) {
+      const hit = this.ray.intersectObject(it.g, true)[0];
+      if (hit && (!best || hit.distance < best.d)) best = { id: it.p.id, d: hit.distance };
+    }
+    return best ? best.id : "";
   }
 
   keys(dt: number, k: Record<string, boolean>) {
@@ -277,8 +357,10 @@ export class LandingSite {
       const dist = p.distanceTo(cam);
       p.project(this.camera);
       const vis = this.mode === "walk" && p.z < 1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1 ? 1 - THREE.MathUtils.smoothstep(dist, 14, 24) : 0;
-      el.style.opacity = vis.toFixed(2);
-      if (vis > 0) el.style.transform = `translate(${((p.x * 0.5 + 0.5) * width).toFixed(1)}px, ${((-p.y * 0.5 + 0.5) * height).toFixed(1)}px)`;
+      const shown = it.p.id === this.focused ? 0 : vis;
+      el.style.opacity = shown.toFixed(2);
+      el.style.pointerEvents = shown > 0.3 ? "auto" : "none";
+      if (shown > 0) el.style.transform = `translate(${((p.x * 0.5 + 0.5) * width).toFixed(1)}px, ${((-p.y * 0.5 + 0.5) * height).toFixed(1)}px)`;
     }
   }
 
@@ -336,6 +418,28 @@ export class LandingSite {
       }
       this.leavePrints(Math.min(step, len), d);
       if (!this.path.length) {
+        if (this.focusArrive) {
+          const fa = this.focusArrive;
+          this.focusArrive = null;
+          this.crouchTarget = fa.crouch;
+          this.userLook = false;
+          // Zoom so the whole item fits this screen's shape, with a little margin.
+          const [tx, ty, tz] = fa.target, x = this.walker.x, z = this.walker.y;
+          const d = Math.hypot(tx - x, ty - (this.terrain.height(x, z) + EYE - fa.crouch), tz - z);
+          const aspect = this.camera.aspect || 1;
+          const v = 2 * Math.atan((fa.h * 1.4) / 2 / d);
+          // Wide screens leave extra width for the card beside the item.
+          const hz = 2 * Math.atan(Math.tan(Math.atan((fa.w * (aspect >= 1 ? 1.75 : 1.25)) / 2 / d)) / aspect);
+          const fov = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(Math.max(v, hz)), 22, 85);
+          this.fovTarget = fov;
+          // The info card covers the bottom on tall screens and the top-right on wide
+          // ones, so sit the item higher, or left of centre, to keep it all visible.
+          const halfV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+          const drop = aspect < 1 ? d * halfV * 0.32 : 0;
+          const fx = tx - x, fz = tz - z, fl = Math.hypot(fx, fz) || 1;
+          const side = aspect >= 1 ? d * halfV * aspect * 0.24 : 0;
+          this.arriveLook = [tx + (-fz / fl) * side, ty - drop, tz + (fx / fl) * side];
+        }
         if (this.arriveLook && !this.userLook) this.lookAt(this.arriveLook);
         this.arriveLook = null;
         if (this.pending) {
@@ -367,15 +471,17 @@ export class LandingSite {
     const k = 1 - Math.exp(-6 * dt);
     this.yaw += (this.tYaw - this.yaw) * k;
     this.pitch += (this.tPitch - this.pitch) * k;
+    this.crouch += (this.crouchTarget - this.crouch) * (1 - Math.exp(-4 * dt));
+    this.fovNow += (this.fovTarget - this.fovNow) * (1 - Math.exp(-3.5 * dt));
     const cam = this.camera, x = this.walker.x, z = this.walker.y;
-    cam.position.set(x, this.terrain.height(x, z) + EYE + bob, z);
+    cam.position.set(x, this.terrain.height(x, z) + EYE - this.crouch + bob, z);
     cam.rotation.set(this.pitch, this.yaw, Math.sin(this.hop) * 0.012);
-    this.fov(62);
+    this.fov(Math.round(this.fovNow * 10) / 10);
     f.fade = 0;
   }
 
   private lookAt([x, y, z]: [number, number, number]) {
-    const p = this.walker, h = this.terrain.height(p.x, p.y) + EYE;
+    const p = this.walker, h = this.terrain.height(p.x, p.y) + EYE - this.crouchTarget;
     this.tYaw = this.nearAngle(Math.atan2(-(x - p.x), -(z - p.y)), this.tYaw);
     this.tPitch = Math.atan2(y - h, Math.hypot(x - p.x, z - p.y));
   }
