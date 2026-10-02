@@ -818,11 +818,17 @@ export class Game {
       }
     }
     for (let i = this.clouds.length - 1; i >= 0; i--) {
-      if (this.clouds[i].position.z > sp.z + 20) {
-        this.scene.remove(this.clouds[i]);
-        disposeCloud(this.clouds[i]);
+      const c = this.clouds[i];
+      if (c.position.z > sp.z + 20) {
+        this.scene.remove(c);
+        disposeCloud(c);
         this.clouds.splice(i, 1);
+        continue;
       }
+      // Thin out as a bank reaches the camera, so flying through it never whites out the screen.
+      const flying = this.state === "play" || this.state === "ending";
+      const fade = flying ? THREE.MathUtils.smoothstep(this.cam.position.z - c.position.z, 2, 36) : 1;
+      for (const s of c.children) (s as THREE.Sprite).material.opacity = s.userData.base * fade;
     }
     for (const o of this.objects) {
       o.mesh.rotation.x += o.spin.x * dt;

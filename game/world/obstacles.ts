@@ -138,7 +138,10 @@ export class ObjectFactory {
     const g = new THREE.Group();
     const n = 3 + Math.floor(Math.random() * 4);
     for (let i = 0; i < n; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.cloudMap, transparent: true, depthWrite: false, opacity: 0.55 + Math.random() * 0.35 }));
+      // Soft grey-white, kept under the bloom threshold so banks don't flare and blind.
+      const base = 0.38 + Math.random() * 0.24;
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.cloudMap, color: 0xd0d8e4, transparent: true, depthWrite: false, opacity: base }));
+      s.userData.base = base;
       s.scale.set(14 + Math.random() * 12, 8 + Math.random() * 6, 1);
       s.position.set(i * 7 - n * 3.5 + (Math.random() * 4 - 2), Math.random() * 4 - 2, Math.random() * 8 - 4);
       g.add(s);
