@@ -49,6 +49,7 @@ components/
   GameClient.tsx            React shell: HUD markup + refs, title/over screens,
                             run tickets, score submission, sharing, mute/voice
   SurfaceUI.tsx             landing-site UI: walk spots, plant flag / place panel sheet
+  Leaderboard.tsx           today's board: podium with gold/silver/bronze RankBadge for the top 3, then a list
 game/                       FRAMEWORK-FREE ENGINE (no React imports, ever)
   Game.ts                   main class: loop, states, input, spawning, collisions,
                             near misses, camera, HUD writes, end-of-run result

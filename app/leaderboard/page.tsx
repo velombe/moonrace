@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatKm, formatPct } from "@/game/constants";
+import Leaderboard from "@/components/Leaderboard";
 import { dayKey } from "@/lib/daily";
 import { getStore } from "@/lib/store";
 
@@ -12,32 +12,26 @@ export default async function LeaderboardPage() {
   const [top, runs, first] = await Promise.all([store.top(day, 50), store.runsToday(day), store.firstMoon()]);
   return (
     <main className="page">
-      <div className="col">
+      <div className="col wide">
+        <p className="lb-kicker">moonrace<span>.lol</span> · {day} UTC</p>
         <h1>Today&apos;s furthest</h1>
         <p>
-          Everyone flies the same route today ({day}, UTC). {runs.toLocaleString("en-US")} {runs === 1 ? "run" : "runs"} so far.{" "}
-          {first ? `First to reach the Moon: ${first.name}.` : "Nobody has reached the Moon yet."}
+          Everyone flies the same route today. {runs.toLocaleString("en-US")} {runs === 1 ? "run" : "runs"} so far.
+        </p>
+        <p className={`lb-first${first ? " claimed" : ""}`}>
+          <span className="lb-moon" aria-hidden="true" />
+          {first ? (
+            <span>First ever to reach the Moon: <strong>{first.name}</strong></span>
+          ) : (
+            <span>Nobody has reached the Moon yet. The first name goes here forever.</span>
+          )}
         </p>
         {top.length === 0 ? (
-          <p>No flights yet today. The board is yours.</p>
+          <p className="lb-empty">No flights yet today. The podium is yours.</p>
         ) : (
-          <table className="board">
-            <thead>
-              <tr><th>#</th><th>Pilot</th><th className="r">Distance</th><th className="r">Of the way</th></tr>
-            </thead>
-            <tbody>
-              {top.map((e, i) => (
-                <tr key={e.runId}>
-                  <td>{i + 1}</td>
-                  <td>{e.name}</td>
-                  <td className="r">{formatKm(e.km)} km</td>
-                  <td className="r n">{formatPct(e.pct)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Leaderboard entries={top} />
         )}
-        <p style={{ marginTop: 32 }}><Link className="btn go" href="/">Launch</Link></p>
+        <p className="lb-cta"><Link className="btn go" href="/">Launch</Link></p>
       </div>
     </main>
   );
