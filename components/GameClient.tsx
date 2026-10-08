@@ -655,7 +655,10 @@ export default function GameClient() {
                 <p className="sub">{result.reason === "moon" ? "You reached the Moon" : "of the way to the Moon"}</p>
               </div>
             </div>
-            <p className={`result-why${result.reason === "moon" ? " good" : ""}`}>
+            <p className="result-why">
+              <span className={`status ${result.reason === "moon" ? "landed" : result.reason === "fuel" ? "fuel" : "crashed"}`}>
+                {result.reason === "moon" ? "Landed" : result.reason === "fuel" ? "Out of fuel" : "Crashed"}
+              </span>
               {result.reason === "moon" ? `384,400 km in ${Math.round(result.durationMs / 1000)} seconds` : `${END_REASON_TEXT[result.reason]} at ${formatKm(result.km)} km`}
             </p>
             {result.quote && (

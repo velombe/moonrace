@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { rocketPaintTexture } from "./textures";
+import { engineBellTexture, rocketBumpTexture, rocketPaintTexture } from "./textures";
 
 function additive(color: number, opacity: number) {
   return new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -91,34 +91,57 @@ export function createRocket(glowTexture: THREE.Texture) {
   // Paint by height, exactly (the lathe would spread v over profile points, including the bottom cap).
   const pos = hull.attributes.position, uv = hull.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setY(i, (pos.getY(i) + 1.8) / 5.2);
-  model.add(new THREE.Mesh(hull, new THREE.MeshStandardMaterial({ map: rocketPaintTexture(), roughness: 0.42, metalness: 0.15 })));
+  const bump = rocketBumpTexture();
+  model.add(new THREE.Mesh(hull, new THREE.MeshStandardMaterial({ map: rocketPaintTexture(), bumpMap: bump, bumpScale: 0.6, roughness: 0.42, metalness: 0.15 })));
   model.add(escapeTower());
 
-  const bellProfile = [new THREE.Vector2(0.09, 0), new THREE.Vector2(0.1, -0.08), new THREE.Vector2(0.14, -0.22), new THREE.Vector2(0.21, -0.46)];
-  const bellMat = new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: 0.6, roughness: 0.35, side: THREE.DoubleSide });
-  const bellGeo = new THREE.LatheGeometry(bellProfile, 20);
+  // Five F-1 style engines: bell-shaped nozzles with cooling-tube texture, on a heat shield.
+  const bellProfile: THREE.Vector2[] = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    bellProfile.push(new THREE.Vector2(0.1 + 0.14 * Math.pow(t, 1.6), -0.52 * t));
+  }
+  const bellMat = new THREE.MeshStandardMaterial({ map: engineBellTexture(), color: 0xffffff, metalness: 0.55, roughness: 0.4, side: THREE.DoubleSide });
+  const bellGeo = new THREE.LatheGeometry(bellProfile, 24);
+  const throat = new THREE.CylinderGeometry(0.075, 0.1, 0.12, 12);
+  const pumpMat = new THREE.MeshStandardMaterial({ color: 0x5b5f68, metalness: 0.5, roughness: 0.45 });
   for (const [x, z] of [[0, 0], [0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3]]) {
     const b = new THREE.Mesh(bellGeo, bellMat);
-    b.position.set(x, -1.8, z);
-    model.add(b);
+    b.position.set(x, -1.86, z);
+    const t = new THREE.Mesh(throat, pumpMat);
+    t.position.set(x, -1.82, z);
+    model.add(b, t);
+  }
+  const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.53, 0.08, 40), new THREE.MeshStandardMaterial({ color: 0x2b2e35, roughness: 0.7, metalness: 0.2 }));
+  shield.position.y = -1.82;
+  model.add(shield);
+  // Engine fairings: conical housings over the outer engines, carrying the fins.
+  const fairingGeo = new THREE.ConeGeometry(0.17, 0.75, 16, 1, false);
+  const fairingMat = new THREE.MeshStandardMaterial({ color: 0xeceef1, roughness: 0.45, metalness: 0.12 });
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2 + Math.PI / 4;
+    const f = new THREE.Mesh(fairingGeo, fairingMat);
+    f.position.set(Math.cos(a) * 0.5, -1.47, Math.sin(a) * 0.5);
+    model.add(f);
   }
 
+  // Fins: swept trapezoids with bevelled edges, rooted on the fairings.
   const fin = new THREE.Shape();
-  fin.moveTo(0, 0); fin.lineTo(0.55, -0.45); fin.lineTo(0.6, -1.0); fin.lineTo(0, -0.7); fin.lineTo(0, 0);
-  const finGeo = new THREE.ExtrudeGeometry(fin, { depth: 0.05, bevelEnabled: false });
-  finGeo.translate(0, 0, -0.025);
+  fin.moveTo(0, 0); fin.lineTo(0.5, -0.42); fin.lineTo(0.56, -0.98); fin.lineTo(0, -0.72); fin.lineTo(0, 0);
+  const finGeo = new THREE.ExtrudeGeometry(fin, { depth: 0.03, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 });
+  finGeo.translate(0, 0, -0.015);
   const finMat = new THREE.MeshStandardMaterial({ color: 0x16181d, roughness: 0.5, metalness: 0.2 });
   for (let i = 0; i < 4; i++) {
     const g = new THREE.Group();
     g.rotation.y = (i * Math.PI) / 2 + Math.PI / 4;
     const f = new THREE.Mesh(finGeo, finMat);
-    f.position.set(0.52, -1.0, 0);
+    f.position.set(0.6, -1.02, 0);
     g.add(f);
     model.add(g);
   }
 
   const flames = new THREE.Group();
-  flames.position.y = -2.25;
+  flames.position.y = -2.34; // just inside the bells
   model.add(flames);
   const outer = new THREE.Mesh(new THREE.ConeGeometry(0.62, 3.4, 20, 1, true), additive(0xff6a1a, 0.35));
   outer.rotation.x = Math.PI; outer.position.y = -1.7;

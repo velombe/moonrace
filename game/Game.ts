@@ -16,7 +16,7 @@ import { ViewRenderer, type View } from "./views";
 import { createEarth, EARTH_RADIUS } from "./world/earth";
 import { COUNT_TIME, LAUNCH_TIME, LIFTOFF_AT, LaunchPad, type PadFrame } from "./world/launchpad";
 import { createMoon } from "./world/moon";
-import { LANE_X, LANE_Y, ObjectFactory, disposeCloud, type WorldObject } from "./world/obstacles";
+import { LANE_X, LANE_Y, ObjectFactory, disposeCloud, obstacleRim, type WorldObject } from "./world/obstacles";
 import { EXTERIOR_LAYER, createRocket } from "./world/rocket";
 import { SpeedLines } from "./world/speedlines";
 import { SUN_DIR, createSky, createStars } from "./world/sky";
@@ -757,7 +757,7 @@ export class Game {
     this.retrigger(el, "go");
   }
 
-  /** Red brackets around up to three obstacles that will hit the ship if it holds course. */
+  /** A red "!" pin over up to three obstacles that will hit the ship if it holds course. */
   private updateDangers(cabinMain: boolean) {
     const marks = this.hud.dangers;
     let n = 0;
@@ -768,21 +768,18 @@ export class Game {
       for (const o of this.objects) {
         if (o.type === "fuel" || o.passed) continue;
         const q = o.mesh.position, dz = sp.z - q.z;
-        if (dz < 10 || dz > 110) continue;
+        if (dz < 10 || dz > 70) continue;
         if (Math.hypot(q.x - sp.x, q.y - sp.y) - o.radius < 0.9) hits.push([dz, o]);
       }
       hits.sort((a, b) => a[0] - b[0]);
-      const v = new THREE.Vector3(), e = new THREE.Vector3();
-      for (const [dz, o] of hits.slice(0, marks.length)) {
-        v.copy(o.mesh.position).project(cam);
-        if (v.z >= 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) continue;
-        e.copy(o.mesh.position).setX(o.mesh.position.x + o.radius).project(cam);
-        const size = THREE.MathUtils.clamp(Math.abs(e.x - v.x) * w * 1.3 + 22, 30, 200);
+      // A pin just above the object's top edge, so the object itself stays in clear view.
+      const v = new THREE.Vector3();
+      for (const [, o] of hits.slice(0, marks.length)) {
+        v.copy(o.mesh.position).setY(o.mesh.position.y + o.radius).project(cam);
+        if (v.z >= 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
         const el = marks[n++];
-        el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w).toFixed(0)}px, ${((-v.y * 0.5 + 0.5) * h).toFixed(0)}px) translate(-50%, -50%)`;
-        el.style.setProperty("--s", `${size.toFixed(0)}px`);
-        el.classList.add("on");
-        el.classList.toggle("near", dz < 45);
+        el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w).toFixed(0)}px, ${((-v.y * 0.5 + 0.5) * h - 10).toFixed(0)}px) translate(-50%, -100%)`;
+        if (!el.classList.contains("on")) el.classList.add("on");
       }
     }
     for (let i = n; i < marks.length; i++) if (marks[i].classList.contains("on")) marks[i].classList.remove("on");
@@ -1172,6 +1169,8 @@ export class Game {
       const label = this.signalLost || !cabinMain ? "Cabin cam" : counting ? (this.padFrame?.shot === "track" ? "Tracking cam" : "Pad cam") : "Chase cam";
       this.setText("pip", this.hud.pipLabel, label);
     }
+    // Full grade for the flight; gentler on the grey Moon views so they stay neutral.
+    this.views.setGrade(this.state === "observe" ? 0.5 : this.state === "landing" || this.state === "surface" ? 0.35 : 1);
     if (this.state === "observe" && this.observatory) {
       main = this.observatory.view;
       if (this.views.bloom) this.views.bloom.strength = 0.25;
@@ -1349,6 +1348,8 @@ export class Game {
     const sp = this.rocket.ship.position;
     const space = this.spaceFactor();
     (this.sky.material as THREE.ShaderMaterial).uniforms.uSpace.value = space;
+    // Obstacle edge light: barely there in the bright sky, a cool rim against black space.
+    obstacleRim.value.setRGB(0.06 + 0.1 * space, 0.07 + 0.13 * space, 0.08 + 0.2 * space);
     this.fog.color.set(0xc6e0f7).lerp(new THREE.Color(0x02040b), space);
     (this.stars.material as THREE.PointsMaterial).opacity = space * 0.9;
     (this.brightStars.material as THREE.PointsMaterial).opacity = space;

@@ -3,6 +3,26 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+
+/**
+ * Final colour grade, on display-space colours after OutputPass: a little more
+ * saturation and contrast, cool shadows and warm highlights. `uAmount` 0–1 blends it.
+ */
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 1 } },
+  vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uAmount; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      vec3 g = mix(vec3(l), c.rgb, 1.16);
+      g = (g - 0.5) * 1.08 + 0.5;
+      g += mix(vec3(-0.012, 0.0, 0.03), vec3(0.03, 0.012, -0.02), smoothstep(0.2, 0.85, l));
+      gl_FragColor = vec4(mix(c.rgb, clamp(g, 0.0, 1.0), uAmount), c.a);
+    }`,
+};
 
 /** A camera looking at a scene, optionally with a second scene drawn on top (the cockpit over the world). */
 export interface View {
@@ -26,7 +46,9 @@ class Chain {
   private world: RenderPass;
   private over: RenderPass;
 
-  constructor(renderer: THREE.WebGLRenderer, bloom: UnrealBloomPass | null) {
+  readonly grade: ShaderPass | null;
+
+  constructor(renderer: THREE.WebGLRenderer, bloom: UnrealBloomPass | null, grade = false) {
     const blank = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
     this.composer = new EffectComposer(renderer);
     this.world = new RenderPass(blank, cam);
@@ -37,6 +59,8 @@ class Chain {
     this.composer.addPass(this.over);
     if (bloom) this.composer.addPass(bloom);
     this.composer.addPass(new OutputPass());
+    this.grade = grade ? new ShaderPass(GradeShader) : null;
+    if (this.grade) this.composer.addPass(this.grade);
   }
 
   render(v: View, aspect: number, dt: number) {
@@ -75,9 +99,18 @@ export class ViewRenderer {
 
   constructor(private renderer: THREE.WebGLRenderer, lowEnd: boolean) {
     if (!lowEnd) this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.75, 0.45, 0.88);
-    this.main = new Chain(renderer, this.bloom);
+    // The grade costs a full-screen pass; low-end devices skip it (like bloom).
+    this.main = new Chain(renderer, this.bloom, !lowEnd);
     this.pip = new Chain(renderer, null);
     this.pip.composer.setPixelRatio(Math.min(renderer.getPixelRatio(), 1.5));
+  }
+
+  /** Colour grade strength for the main view (0 turns the pass off). */
+  setGrade(amount: number) {
+    const g = this.main.grade;
+    if (!g) return;
+    g.enabled = amount > 0.001;
+    g.uniforms.uAmount.value = amount;
   }
 
   setSize(w: number, h: number) {

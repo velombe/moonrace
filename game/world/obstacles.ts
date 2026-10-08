@@ -17,6 +17,26 @@ export interface WorldObject {
   origin?: "split" | "debris";
 }
 
+/**
+ * Rim light shared by every obstacle material (linear RGB). The game sets it from
+ * the altitude: faint in the bright atmosphere, a cool edge light in space so dark
+ * rocks and satellites separate from the black.
+ */
+export const obstacleRim = { value: new THREE.Color(0, 0, 0) };
+
+/** Adds a fresnel rim (obstacleRim) to a standard material. */
+function withRim<T extends THREE.MeshStandardMaterial>(mat: T): T {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRim = obstacleRim;
+    shader.fragmentShader = "uniform vec3 uRim;\n" + shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      "outgoingLight += uRim * pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 3.0);\n#include <opaque_fragment>",
+    );
+  };
+  mat.customProgramCacheKey = () => "obstacle-rim";
+  return mat;
+}
+
 export const LANE_X = 13;
 export const LANE_Y = 7.5;
 
@@ -53,7 +73,10 @@ export class ObjectFactory {
       fuel: new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0xff7a10, emissiveIntensity: 0.7, roughness: 0.3, metalness: 0.3 }),
       cap: new THREE.MeshStandardMaterial({ color: 0xe8eaef, roughness: 0.3 }),
       ring: new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: false }),
+      // Dark back-face shell drawn slightly larger than a body: a soft outline against the bright sky.
+      outline: new THREE.MeshBasicMaterial({ color: 0x0a1230, side: THREE.BackSide }),
     };
+    for (const m of [this.mat.balloon, this.mat.payload, this.mat.gold, this.mat.panel, this.mat.white, this.mat.junk, this.mat.rock]) withRim(m);
     for (let k = 0; k < 4; k++) {
       const g = new THREE.IcosahedronGeometry(1, 2), p = g.attributes.position, s = k * 17 + 3;
       const v = new THREE.Vector3();
@@ -65,6 +88,14 @@ export class ObjectFactory {
       g.computeVertexNormals();
       this.rocks.push(g);
     }
+  }
+
+  /** Outline shell for a body mesh: same geometry, `grow` larger (fraction of its size). Visual only. */
+  private outline(m: THREE.Mesh, grow: number) {
+    const o = new THREE.Mesh(m.geometry, this.mat.outline);
+    o.scale.setScalar(1 + grow);
+    m.add(o);
+    return m;
   }
 
   private place(obj: THREE.Object3D, z: number, rng: Rng, ship: THREE.Vector3) {
@@ -84,6 +115,7 @@ export class ObjectFactory {
     let type: ObstacleType, radius: number;
     if (km < 100) {
       type = "balloon";
+      // No outline on balloons: a dark edge on a white envelope reads as a cartoon.
       const b = new THREE.Mesh(geo.balloon, mat.balloon); b.scale.set(1, 1.15, 1); b.position.y = 0.6;
       const t = new THREE.Mesh(geo.tether, mat.tether); t.position.y = -2;
       const p = new THREE.Mesh(geo.payload, mat.payload); p.position.y = -3.1;
@@ -93,7 +125,7 @@ export class ObjectFactory {
     } else if (km < 60000) {
       if (rng.next() < 0.55) {
         type = "satellite";
-        g.add(new THREE.Mesh(geo.satBody, mat.gold));
+        g.add(this.outline(new THREE.Mesh(geo.satBody, mat.gold), 0.07));
         for (const s of [-1, 1]) {
           const boom = new THREE.Mesh(geo.boom, mat.white); boom.rotation.z = Math.PI / 2; boom.position.x = s * 1.2;
           const panel = new THREE.Mesh(geo.panel, mat.panel); panel.position.x = s * 3.4;
@@ -106,7 +138,7 @@ export class ObjectFactory {
       } else {
         type = "junk";
         const s = rng.range(0.7, 1.4);
-        const j = new THREE.Mesh(geo.junk, mat.junk); j.scale.set(s, s * rng.range(0.3, 1), s * rng.range(0.6, 1.3));
+        const j = this.outline(new THREE.Mesh(geo.junk, mat.junk), 0.09); j.scale.set(s, s * rng.range(0.3, 1), s * rng.range(0.6, 1.3));
         g.add(j);
         radius = s * 0.95;
         spin.multiplyScalar(2.2);
@@ -114,7 +146,7 @@ export class ObjectFactory {
     } else {
       type = "asteroid";
       const s = rng.range(1.4, 3.8);
-      const a = new THREE.Mesh(this.rocks[rng.int(4)], mat.rock); a.scale.set(s, s * rng.range(0.75, 1), s * rng.range(0.8, 1.1));
+      const a = this.outline(new THREE.Mesh(this.rocks[rng.int(4)], mat.rock), 0.05); a.scale.set(s, s * rng.range(0.75, 1), s * rng.range(0.8, 1.1));
       g.add(a);
       radius = s * 0.85;
       spin.multiplyScalar(0.7);
@@ -135,7 +167,7 @@ export class ObjectFactory {
     for (let i = 0; i < n; i++) {
       const s = s0 * rng.range(0.42, 0.58);
       const g = new THREE.Group();
-      const a = new THREE.Mesh(this.rocks[rng.int(4)], this.mat.rock); a.scale.set(s, s * rng.range(0.7, 1), s * rng.range(0.8, 1.1));
+      const a = this.outline(new THREE.Mesh(this.rocks[rng.int(4)], this.mat.rock), 0.06); a.scale.set(s, s * rng.range(0.7, 1), s * rng.range(0.8, 1.1));
       g.add(a);
       const ang = (i / n) * Math.PI * 2 + rng.range(-0.5, 0.5);
       g.position.copy(parent.mesh.position).add(new THREE.Vector3(Math.cos(ang), Math.sin(ang), 0).multiplyScalar(s0 * 0.5));
