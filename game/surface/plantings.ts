@@ -19,7 +19,7 @@ export type NewPlanting = Pick<Planting, "kind" | "name" | "country" | "logo">;
 /** Where country flag images live (copied from flag-icons by `npm run flags`). Override for portal builds. */
 export const plantingAssets = { flagUrl: (code: string) => `/flags/${code}.svg` };
 
-const FONT = '"Barlow Condensed", "Arial Narrow", sans-serif';
+const FONT = '"Saira Condensed", "Arial Narrow", sans-serif';
 const images = new Map<string, Promise<HTMLImageElement | null>>();
 
 export function loadImage(src: string): Promise<HTMLImageElement | null> {

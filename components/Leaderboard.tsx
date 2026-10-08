@@ -26,7 +26,7 @@ export function RankBadge({ rank, size = 56 }: { rank: 1 | 2 | 3; size?: number 
       <circle cx="32" cy="30" r="27" fill={`url(#${id})`} />
       <circle cx="32" cy="30" r="21.5" fill="none" stroke={m.ring} strokeOpacity=".7" strokeWidth="1" strokeDasharray="1.2 2.6" />
       <circle cx="32" cy="30" r="27" fill="none" stroke="#000" strokeOpacity=".25" strokeWidth="1.2" />
-      <text x="32" y="40.5" textAnchor="middle" fontFamily="Barlow Condensed, Arial Narrow, sans-serif" fontWeight="500" fontSize="30" fill="#1a1407" fillOpacity=".82">{rank}</text>
+      <text x="32" y="40.5" textAnchor="middle" fontFamily="Saira Condensed, Arial Narrow, sans-serif" fontWeight="800" fontSize="30" fill="#1a1407" fillOpacity=".82">{rank}</text>
     </svg>
   );
 }

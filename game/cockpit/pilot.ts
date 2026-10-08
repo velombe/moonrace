@@ -272,7 +272,7 @@ export class Pilot {
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, c.width - 4, c.height - 4);
     ctx.fillStyle = "#eef2ff";
-    ctx.font = '500 34px "Barlow Condensed", "Arial Narrow", sans-serif';
+    ctx.font = '700 34px "Saira Condensed", "Arial Narrow", sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText((name.trim() || "Pilot").slice(0, 18), c.width / 2, c.height / 2 + 2, c.width - 20);

@@ -79,7 +79,7 @@ function panelTexture() {
   ctx.fillStyle = "#3b3f47";
   for (let i = 0; i < 7; i++) ctx.fillRect(Math.random() * 470, Math.random() * 480, 26 + Math.random() * 20, 18);
   ctx.fillStyle = "#30343c";
-  ctx.font = '500 20px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.font = '700 20px "Saira Condensed", "Arial Narrow", sans-serif';
   const labels = ["Handhold", "O2 valve 2", "No step", "Cabin fan", "Snacks", "Do not lick"];
   labels.forEach((l, i) => ctx.fillText(l, 20 + (i % 3) * 160, 70 + Math.floor(i / 3) * 256));
   const t = colorTex(c);
@@ -92,7 +92,7 @@ function labelTexture(lines: string[], w: number, h: number, size: number, bg: s
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = fg;
-  ctx.font = `500 ${size}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+  ctx.font = `700 ${size}px "Saira Condensed", "Arial Narrow", sans-serif`;
   lines.forEach((l, i) => ctx.fillText(l, 14, size * 1.25 * (i + 1)));
   return colorTex(c);
 }

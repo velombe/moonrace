@@ -18,6 +18,7 @@ import { COUNT_TIME, LAUNCH_TIME, LIFTOFF_AT, LaunchPad, type PadFrame } from ".
 import { createMoon } from "./world/moon";
 import { LANE_X, LANE_Y, ObjectFactory, disposeCloud, type WorldObject } from "./world/obstacles";
 import { EXTERIOR_LAYER, createRocket } from "./world/rocket";
+import { SpeedLines } from "./world/speedlines";
 import { SUN_DIR, createSky, createStars } from "./world/sky";
 import { moonSurface, moonSurfaceJob, radialTexture } from "./world/textures";
 import type { MoonSurface } from "./world/moon";
@@ -64,6 +65,16 @@ export interface HudRefs {
   reticle: HTMLElement;
   reticleLabel: HTMLElement;
   deflectorPips: HTMLElement[];
+  /** Streak badge: the count and a bar that drains over the 4 s chain window. */
+  combo: HTMLElement;
+  comboCount: HTMLElement;
+  comboBar: HTMLElement;
+  /** Pooled "+9 fuel" numbers that float up from the rocket. */
+  floats: HTMLElement[];
+  /** Full-screen flash (razor-thin passes, big hits, crashes). */
+  flash: HTMLElement;
+  /** Pooled brackets around obstacles on a collision course. */
+  dangers: HTMLElement[];
 }
 
 export interface RunResult {
@@ -140,6 +151,13 @@ export class Game {
   private fog = new THREE.Fog(0xc6e0f7, 200, 520);
 
   private objects: WorldObject[] = [];
+  private speedLines = new SpeedLines();
+  /** Hit-stop: the world freezes for a beat on razor-thin passes and big hits. */
+  private hitStop = 0;
+  private floatIndex = 0;
+  /** Seconds left of the first-runs steering hint (0 = hidden). */
+  private hintTimer = 0;
+  private hintFrom = new THREE.Vector2();
   private deflector: Deflector;
   /** Seeded per run but separate from `rng`, so fragments never shift the daily layout. */
   private debrisRng = new Rng(1);
@@ -250,7 +268,7 @@ export class Game {
 
     const s = this.scene;
     s.fog = this.fog;
-    s.add(this.sky, this.stars, this.brightStars, this.earth.group, this.moon.mesh, this.rocket.ship);
+    s.add(this.sky, this.stars, this.brightStars, this.earth.group, this.moon.mesh, this.rocket.ship, this.speedLines.mesh);
     s.add(new THREE.HemisphereLight(0x9fb8ff, 0x1a1a22, 0.45 * Math.PI));
     const sunLight = new THREE.DirectionalLight(0xfff1dc, 1.6 * Math.PI);
     sunLight.position.copy(SUN_DIR).multiplyScalar(100);
@@ -326,8 +344,8 @@ export class Game {
     this.cockpit.reset(callsign);
     this.signalLost = false;
     this.hud.pip.classList.remove("lost");
-    // The first launch always plays in full; after that it can be skipped.
-    this.canSkip = this.runs > 1;
+    // Every launch can be skipped (tap / Space): players came to fly, not to watch.
+    this.canSkip = true;
     this.hud.root.classList.toggle("can-skip", this.canSkip);
     this.hud.root.classList.add("playing");
     if (!test || test.startPct <= 0) for (let z = -30; z > -500; z -= 16) this.addCloud(z, false);
@@ -685,8 +703,14 @@ export class Game {
     this.boost = 1;
     this.camKick = razor ? 1 : 0.6;
     const h = this.hud;
-    this.pop(razor ? "Razor thin" : "Close call", `+${gain} fuel${this.streak > 1 ? `   ×${this.streak} streak` : ""}`, razor ? "razor" : "", dx);
+    this.pop(razor ? "Razor thin" : "Close call", this.streak > 1 ? `×${this.streak} streak` : "", razor ? "razor" : "", dx);
     this.retrigger(dx > 0 ? h.edgeRight : h.edgeLeft, "flash");
+    this.floatText(`+${gain} fuel`, razor ? "razor" : "fuel");
+    this.buzz(razor ? 28 : 14);
+    if (razor) {
+      this.hitStop = 0.06;
+      this.screenFlash("white");
+    }
     const charge = (razor ? CHARGE_RAZOR : CHARGE_CLOSE) + Math.min(this.streak - 1, 2) * CHARGE_STREAK;
     if (this.deflector.addCharge(Math.min(1, charge))) this.audio.deflectorCharged(Math.floor(this.deflector.charge));
     this.audio.nearMiss(this.streak, razor);
@@ -700,6 +724,68 @@ export class Game {
       this.lastSlowmo = this.t;
       this.audio.slowmo();
     }
+  }
+
+  /** Phone vibration, where supported (no-op elsewhere). */
+  private buzz(pattern: number | number[]) {
+    try {
+      navigator.vibrate?.(pattern);
+    } catch {}
+  }
+
+  private screenFlash(kind: "white" | "hit" | "bad") {
+    const f = this.hud.flash;
+    f.dataset.kind = kind;
+    this.retrigger(f, "go");
+  }
+
+  /** A reward number that floats up from the rocket (centre-low in the cabin view). */
+  private floatText(text: string, kind: "fuel" | "razor") {
+    const el = this.hud.floats[this.floatIndex++ % this.hud.floats.length];
+    if (!el) return;
+    const w = this.container.clientWidth, h = this.container.clientHeight;
+    let x = w / 2, y = h * 0.62;
+    if (!(this.preferCabin && !this.signalLost)) {
+      const p = this.rocket.ship.position.clone().project(this.cam);
+      x = (p.x * 0.5 + 0.5) * w;
+      y = (-p.y * 0.5 + 0.5) * h - 40;
+    }
+    el.textContent = text;
+    el.className = kind;
+    el.style.left = `${x.toFixed(0)}px`;
+    el.style.top = `${y.toFixed(0)}px`;
+    this.retrigger(el, "go");
+  }
+
+  /** Red brackets around up to three obstacles that will hit the ship if it holds course. */
+  private updateDangers(cabinMain: boolean) {
+    const marks = this.hud.dangers;
+    let n = 0;
+    if (this.state === "play" && !this.test) {
+      const sp = this.rocket.ship.position, cam = cabinMain ? this.cabinCam : this.cam;
+      const w = this.container.clientWidth, h = this.container.clientHeight;
+      const hits: [number, WorldObject][] = [];
+      for (const o of this.objects) {
+        if (o.type === "fuel" || o.passed) continue;
+        const q = o.mesh.position, dz = sp.z - q.z;
+        if (dz < 10 || dz > 110) continue;
+        if (Math.hypot(q.x - sp.x, q.y - sp.y) - o.radius < 0.9) hits.push([dz, o]);
+      }
+      hits.sort((a, b) => a[0] - b[0]);
+      const v = new THREE.Vector3(), e = new THREE.Vector3();
+      for (const [dz, o] of hits.slice(0, marks.length)) {
+        v.copy(o.mesh.position).project(cam);
+        if (v.z >= 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) continue;
+        e.copy(o.mesh.position).setX(o.mesh.position.x + o.radius).project(cam);
+        const size = THREE.MathUtils.clamp(Math.abs(e.x - v.x) * w * 1.3 + 22, 30, 200);
+        const el = marks[n++];
+        el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w).toFixed(0)}px, ${((-v.y * 0.5 + 0.5) * h).toFixed(0)}px) translate(-50%, -50%)`;
+        el.style.setProperty("--s", `${size.toFixed(0)}px`);
+        el.classList.add("on");
+        el.classList.toggle("near", dz < 45);
+      }
+    }
+    for (let i = n; i < marks.length; i++) if (marks[i].classList.contains("on")) marks[i].classList.remove("on");
   }
 
   /** The pop-up text at 60% height (near misses and deflector hits). */
@@ -724,6 +810,11 @@ export class Game {
     const big = split || o.type === "satellite";
     this.impact(o, big);
     this.audio.deflectorHit(big, pan);
+    this.buzz(big ? 35 : 18);
+    if (big) {
+      this.hitStop = 0.05;
+      this.screenFlash(o.type === "satellite" ? "bad" : "hit");
+    }
     this.camKick = Math.max(this.camKick, big ? 0.8 : 0.5);
     let kind: "asteroid" | "split" | "junk" | "satellite" = "asteroid";
     if (o.type === "asteroid") {
@@ -815,6 +906,8 @@ export class Game {
     else {
       this.audio.explode();
       this.explode();
+      this.screenFlash("bad");
+      this.buzz([60, 40, 140]);
     }
     const key = reason === "fuel" ? "nofuel" : reason === "moon" ? "moon" : reason === "balloon" ? "balloonCrash"
       : origin === "debris" ? "kesslerCrash" : origin === "split" ? "splitCrash" : "crash";
@@ -863,7 +956,8 @@ export class Game {
     const realDt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (this.slowmo > 0) this.slowmo -= realDt;
-    const timeScale = this.slowmo > 0 ? 1 - 0.7 * Math.min(1, this.slowmo / 0.6) : 1;
+    if (this.hitStop > 0) this.hitStop -= realDt;
+    const timeScale = this.hitStop > 0 ? 0 : this.slowmo > 0 ? 1 - 0.7 * Math.min(1, this.slowmo / 0.6) : 1;
     const dt = realDt * timeScale;
     this.boost = Math.max(0, this.boost - dt * 1.1);
     this.camKick = Math.max(0, this.camKick - realDt * 2.5);
@@ -878,9 +972,11 @@ export class Game {
       const cn = this.countdown > 0.2 ? n : 0;
       if (cn !== this.lastCount) {
         this.lastCount = cn;
+        this.retrigger(this.hud.count, "tick");
         if (cn > 0) this.audio.beep();
         else {
           this.audio.liftoff();
+          this.buzz(40);
           if (!this.test) this.chatter.say("launch", 2);
         }
       }
@@ -898,6 +994,11 @@ export class Game {
       this.fade = this.padFrame.fade;
       if (lt >= LAUNCH_TIME) {
         c.style.opacity = "0";
+        if (this.runs <= 2 && !this.test) {
+          this.hintTimer = 4.5;
+          this.hintFrom.copy(this.target);
+          this.hud.root.classList.add("hint");
+        }
         this.setState("play");
       }
     } else if (this.state === "landing" || this.state === "surface") {
@@ -987,6 +1088,17 @@ export class Game {
     const observing = this.state === "observe";
     const onSurface = this.state === "landing" || this.state === "surface";
     this.updateEnvironment(dt, realDt, now, !cabinMain && this.state !== "count" && !observing && !onSurface);
+    const flying = this.state === "play" || this.state === "ending";
+    this.speedLines.update(this.cam.position, flying ? THREE.MathUtils.clamp((this.speed - 70) / 70, 0, 1) * 0.7 + this.boost * 0.6 : 0, this.speed * (1 + MAX_BOOST * this.boost));
+    this.updateDangers(cabinMain);
+    if (this.hintTimer > 0) {
+      this.hintTimer -= realDt;
+      // Gone once they've steered a bit, or after a few seconds either way.
+      if (this.hintTimer <= 0 || this.target.distanceTo(this.hintFrom) > 3) {
+        this.hintTimer = 0;
+        this.hud.root.classList.remove("hint");
+      }
+    }
     this.chatter.update(realDt);
     const thrust = this.state === "play" ? 1 + this.speed / 200 : this.state === "count" ? this.padFrame?.thrust ?? 0 : 0.5;
     this.rocket.setThrust(thrust, ship.visible && !(this.reason === "fuel" && (this.state === "ending" || this.state === "over")));
@@ -1208,6 +1320,8 @@ export class Game {
           if (d < o.radius + 1.6) {
             this.fuel = Math.min(100, this.fuel + FUEL_PICKUP);
             this.audio.pickup();
+            this.floatText(`+${FUEL_PICKUP} fuel`, "fuel");
+            this.buzz(10);
             this.chatter.say("pickup", 0, 0.12);
             this.cockpit.pickup();
             this.scene.remove(o.mesh);
@@ -1319,8 +1433,16 @@ export class Game {
       if (this.toastTimer <= 0) h.toast.classList.remove("show");
     }
     const pct = Math.min(100, (this.km / MOON_KM) * 100);
-    this.setText("km", h.km, `${formatKm(this.km)} km`);
-    this.setText("pct", h.pct, `${formatPct(pct)} of the way to the Moon`);
+    this.setText("km", h.km, formatKm(this.km));
+    this.setText("pct", h.pct, formatPct(pct));
+    // Combo: visible while a streak of 2+ can still be extended (4 s window).
+    const left = 4 - (this.t - this.lastNearMiss);
+    const combo = this.state === "play" && this.streak >= 2 && left > 0;
+    if (h.combo.classList.contains("on") !== combo) h.combo.classList.toggle("on", combo);
+    if (combo) {
+      this.setText("combo", h.comboCount, `×${this.streak}`);
+      h.comboBar.style.transform = `scaleX(${(left / 4).toFixed(3)})`;
+    }
     const pos = `${pct}%`;
     h.marker.style.left = pos;
     h.fill.style.width = pos;
@@ -1328,6 +1450,8 @@ export class Game {
     this.setText("clock", h.clock, `T+${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
     h.fuelBar.style.width = `${Math.max(0, this.fuel)}%`;
     h.fuelBar.classList.toggle("low", this.fuel < 25);
+    const low = this.state === "play" && this.fuel < 25;
+    if (h.root.classList.contains("fuel-low") !== low) h.root.classList.toggle("fuel-low", low);
     this.setText("fuel", h.fuelPct, `${Math.max(0, Math.round(this.fuel))}%`);
   }
 }

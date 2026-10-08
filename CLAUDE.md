@@ -8,7 +8,7 @@ Context and working guide for Claude Code. Read this before making changes.
 
 **Product goal:** go viral without an existing audience. The game itself has to do the marketing, so features are judged by whether they make people (1) play again and (2) share. Realism got people to try it; _feeling_ is what keeps them. When in doubt, prioritize game feel, humor, and shareability over more realism or more content.
 
-**Tone:** cinematic and realistic visuals, but the voice is funny (".lol"). Mission control is dry, affectionate, slightly alarmed. Never mean to the player.
+**Tone:** cinematic and realistic 3D world with a bold, arcade game UI on top ("cinematic arcade"), and a funny voice (".lol"). Mission control is dry, affectionate, slightly alarmed. Never mean to the player.
 
 ## Tech stack
 
@@ -134,7 +134,7 @@ scripts/voice-script.ts     exporter (run with node --experimental-strip-types)
 
 ### Launch, cabin and picture-in-picture
 
-- **Launch (`count`):** rendered from `LaunchPad`'s own scene. Timeline in `world/launchpad.ts`: wide shot → ignition at 1.5 s (engine close-up, steam out of the flame trench) → liftoff at 3.0 s ("Liftoff" + launch chatter) → long-lens tracking shot with pitch-over → whiteout cut to `play` at 6.0 s. Mission time `t` only starts in `play`, so validation is unaffected. A player's first launch plays in full; later ones skip with tap / Space / Enter / Esc.
+- **Launch (`count`):** rendered from `LaunchPad`'s own scene. Timeline in `world/launchpad.ts`: wide shot → ignition at 1.5 s (engine close-up, steam out of the flame trench) → liftoff at 3.0 s ("Liftoff" + launch chatter) → long-lens tracking shot with pitch-over → whiteout cut to `play` at 6.0 s. Mission time `t` only starts in `play`, so validation is unaffected. Every launch (including the first) skips with tap / Space / Enter / Esc after 0.4 s.
 - **Cabin:** `Cockpit` is drawn over the world after a depth clear, so the window shows the real flight. The outside camera rides the ship (`placeWorldCamera`); the rocket hull is on `EXTERIOR_LAYER` so it doesn't block that camera. The pilot holds the stick (follows steering) and throttle, tracks the nearest incoming obstacle, flinches on near misses and gestures on events (pre-launch checks, taps the fuel screen on low fuel, thumbs up on pickups, waves at the ISS, points at the plush at the Kármán line, shrugs when out of fuel, celebrates at the Moon). The plush Moon hangs under gravity (toward the tail on the pad) and floats once in space. The name tag shows the callsign.
 - **PiP:** whichever view isn't on the big screen renders into `HudRefs.pip`'s rectangle (scissored viewport, no bloom). Click the PiP or press C to swap; stored as `moonrace-view` (`chase` | `cabin`). On a crash the cabin feed shows "Signal lost" and the outside view takes the big screen. Keep the `.pip` element free of CSS transforms: its rect is measured on resize and on entering `count`.
 
@@ -193,10 +193,14 @@ Defined in `MILESTONES` (km, title, detail, chatter key): 11, 50, 100 (Kármán 
 - **Camera:** chase cam with smoothing, speed shake, FOV `58 + speed*0.07 + boost*9`; orbit cam on title and after crashes.
 - **Home screen:** the menu sits in a left column on a dark gradient (wide screens) or at the bottom on a dark fade (tall screens, `max-aspect-ratio: 23/20`). The title camera uses `setViewOffset` to frame the rocket in the open part (right of centre / higher up); keep the 1.15 aspect threshold in `Game.updateEnvironment` and the CSS in sync. Text never sits directly on the bright sky.
 - **Quality:** touch devices with ≤4 cores get pixel ratio 1.25, no antialias, no bloom.
-- **UI type:** Barlow Condensed (200/300/500) for display numbers and titles; Barlow for body.
-- **UI colors:** `--space #02040b`, `--ink #eef2ff`, `--haze #9aabcf`, `--flare #ffb347` (amber accent: fuel, markers, speaker names), `--signal #ff4d5e` (low fuel).
-- **HUD:** top-centre Earth→Moon track + big km + percentage; bottom-left mission time; bottom-right fuel; milestone lower-thirds bottom-left; chatter subtitles under the km counter; near-miss pop at 60% height; mute and voice buttons top-right.
-- Keep the HUD thin and cinematic. No heavy panels, no all-caps labels.
+- **Direction: cinematic arcade.** The world stays realistic; everything the player reads or presses looks like a game: heavy type, chunky pressable buttons, navy glass panels, outlined pop text, juice. Never put light text straight on the bright sky; use a panel or chip behind it.
+- **UI type:** Saira Condensed 700–900 (`--display`) for numbers, titles, buttons and pop text (buttons and badges in uppercase); Barlow 400–700 (`--body`) for sentences. Canvas textures (cockpit screens, name tag, plaques) use Saira Condensed too.
+- **UI colors:** `--space #050816`, `--ink #f4f6ff`, `--haze #aab8dc`, `--flare #ffa53a` (amber: fuel, markers, speaker badges), `--hot #ff6b23` (outlines, button base), `--cyan #4ad8ff` (track, icons, deflector), `--gold #ffd34d` (streaks, ribbons, ranks), `--good #63f5a7`, `--signal #ff3d5a` (danger, low fuel, satellites). Panels: `--panel` gradient + `--panel-line` rim.
+- **Buttons:** `.btn.go` orange gradient with a 5px darker bottom edge that presses down on `:active`; `.btn.ghost` navy glass with the same edge. Launch / Fly again are the biggest buttons on their screens.
+- **HUD:** top-centre thick Earth→Moon track (cyan→orange fill, ticks at milestones ≥ 30,000 km) + heavy km counter + percentage chip; chatter below as a speaker badge + text pill; bottom-left mission-time chip; bottom-right fuel (icon, heavy %, 10-segment bar, red pulse when low) with the deflector pips in the same row; combo badge at left (×N, bar drains over the 4 s chain window); milestone banners bottom-left; mute and voice buttons top-right.
+- **Juice:** outlined, bouncing pop text; floating "+N fuel" numbers at the rocket (`floatText`); full-screen flash (`screenFlash`: white razor, blue big hit, red crash/satellite); 60 ms hit-stop on razor-thin passes and big deflector hits; speed lines (`world/speedlines.ts`) scaling with speed and boost; red danger brackets with "!" on up to three obstacles on a collision course 10–110 units ahead (`updateDangers`, not on test flights); phone vibration (`buzz`) on near misses, pickups, hits, liftoff and crashes; punchy 3-2-1 (`tick`). All respect `prefers-reduced-motion`.
+- **Steering hint:** a player's first two runs show a sweeping hand + "move the mouse / drag to steer" for up to 4.5 s, gone as soon as they steer.
+- **Game-over card:** solid panel with a medal for the furthest tier reached (`medalFor`: Cadet < 100 km, Astronaut, Geostationary ≥ 35,786, Halfway hero ≥ 192,200, Moonwalker), a "New best!" / "First flight!" ribbon, the end reason, the quote, icon stat chips, rank line, a big FLY AGAIN and Share.
 
 ## Audio
 

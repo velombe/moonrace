@@ -26,7 +26,7 @@ export interface ScreenData {
 }
 
 const INK = "#eef2ff", HAZE = "#9aabcf", FLARE = "#ffb347", SIGNAL = "#ff4d5e", BG = "#050b16";
-const FONT = '"Barlow Condensed", "Arial Narrow", sans-serif';
+const FONT = '"Saira Condensed", "Arial Narrow", sans-serif';
 /** Radar shows contacts up to this far ahead (game units). */
 const RADAR_RANGE = 260;
 

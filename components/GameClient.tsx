@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Game, type GameState, type HudRefs, type RunResult, type TestFlight } from "@/game/Game";
-import { END_REASON_TEXT, formatKm, formatPct } from "@/game/constants";
+import { END_REASON_TEXT, MILESTONES, MOON_KM, formatKm, formatPct } from "@/game/constants";
 import { LANDMARKS } from "@/game/moonAtlas";
 import { dayKey, daySeed } from "@/lib/daily";
 import { ensurePilot, pilotHeaders, type PilotInfo } from "@/lib/pilotClient";
 import { deflectorSummary, shareQuery } from "@/lib/share";
 import { LocalSiteStore, type Planting, type SiteStore } from "@/lib/site";
+import ChipStrip from "./ChipStrip";
+import Medal, { medalFor } from "./Medal";
 import PilotControls from "./PilotControls";
 import SurfaceUI from "./SurfaceUI";
 
@@ -50,6 +52,15 @@ function readTestSurface(): boolean {
   return new URLSearchParams(location.search).get("test") === "surface";
 }
 
+/** Small stroked icon for the result chips. */
+function Icon({ d }: { d: string }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
 /** End-screen line for the deflector: what it took out, or a dry note if every shot missed. */
 function deflectorLine(r: RunResult) {
   const sum = deflectorSummary(r);
@@ -83,7 +94,11 @@ export default function GameClient() {
     fade: useRef<HTMLDivElement>(null), pip: useRef<HTMLButtonElement>(null), pipLabel: useRef<HTMLSpanElement>(null),
     moonAlt: useRef<HTMLSpanElement>(null),
     reticle: useRef<HTMLDivElement>(null), reticleLabel: useRef<HTMLSpanElement>(null),
+    combo: useRef<HTMLDivElement>(null), comboCount: useRef<HTMLElement>(null), comboBar: useRef<HTMLElement>(null),
+    flash: useRef<HTMLDivElement>(null),
   };
+  const floatRefs = useRef<HTMLElement[]>([]);
+  const dangerRefs = useRef<HTMLElement[]>([]);
   const pipRefs = useRef<HTMLElement[]>([]);
   const markRefs = useRef<HTMLElement[]>([]);
   const siteLabelRefs = useRef<HTMLElement[]>([]);
@@ -107,6 +122,12 @@ export default function GameClient() {
   const [pilotNote, setPilotNote] = useState<{ name: string; error: string; suggestion?: string } | null>(null);
   const saveCallsignRef = useRef<(() => void) | null>(null);
   const [best, setBest] = useState(0);
+  // The best before this run, to tell a new best (the game-over handler is created once, so read a ref).
+  const bestRef = useRef(0);
+  const [prevBest, setPrevBest] = useState(0);
+  useEffect(() => {
+    bestRef.current = best;
+  }, [best]);
   /** "server": the pilot's recorded best (matches the all-time board). "device": offline fallback from this browser. */
   const [bestSource, setBestSourceState] = useState<"server" | "device">("device");
   // Mirrored in a ref: the game-over handler is created once and reads it later.
@@ -145,6 +166,7 @@ export default function GameClient() {
 
   const handleGameOver = useCallback(
     async (res: RunResult) => {
+      setPrevBest(bestRef.current);
       setResult(res);
       setShareLabel("Share result");
       if (res.test) {
@@ -222,6 +244,8 @@ export default function GameClient() {
         moonMarks: markRefs.current, moonAlt: r.moonAlt.current!,
         siteLabels: siteLabelRefs.current,
         reticle: r.reticle.current!, reticleLabel: r.reticleLabel.current!, deflectorPips: pipRefs.current,
+        combo: r.combo.current!, comboCount: r.comboCount.current!, comboBar: r.comboBar.current!,
+        floats: floatRefs.current, flash: r.flash.current!, dangers: dangerRefs.current,
       };
       game = new Game(hostRef.current, hud, {
         onStateChange: (s) => setPhase(s),
@@ -384,13 +408,42 @@ export default function GameClient() {
       <div className="hud hud-part">
         <div className="track">
           <span className="dot earth" aria-hidden="true" />
-          <div className="line"><b ref={r.fill} /><i className="marker" ref={r.marker} /></div>
+          <div className="line">
+            {MILESTONES.filter((m) => m.km >= 30000).map((m) => (
+              <span key={m.km} className="tick" style={{ left: `${(m.km / MOON_KM) * 100}%` }} />
+            ))}
+            <b ref={r.fill} /><i className="marker" ref={r.marker} />
+          </div>
           <span className="dot moon" aria-hidden="true" />
         </div>
-        <div className="km num" ref={r.km}>0 km</div>
-        <div className="pct" ref={r.pct}>0% of the way to the Moon</div>
+        <div className="km num"><span ref={r.km}>0</span><small>km</small></div>
+        <div className="pct"><b ref={r.pct}>0%</b> of the way to the Moon</div>
       </div>
-      <div className="met hud-part"><small>Mission time</small><div className="num" ref={r.clock}>T+00:00</div></div>
+      <div className="met hud-part">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></svg>
+        <span className="num" ref={r.clock}>T+00:00</span>
+      </div>
+      <div className="combo hud-part" ref={r.combo} aria-hidden="true">
+        <b className="num" ref={r.comboCount}>×2</b>
+        <span>combo</span>
+        <i><i ref={r.comboBar} /></i>
+      </div>
+      <div className="floats" aria-hidden="true">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <span key={i} ref={(el) => { if (el) floatRefs.current[i] = el; }} />
+        ))}
+      </div>
+      <div className="dangers" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <i key={i} ref={(el) => { if (el) dangerRefs.current[i] = el; }} />
+        ))}
+      </div>
+      <div className="steer-hint" aria-hidden="true">
+        <svg className="hand" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10m0-1.5a1.5 1.5 0 0 1 3 0V11m0-1a1.5 1.5 0 0 1 3 0v4.5a6.5 6.5 0 0 1-6.5 6.5h-.6a6 6 0 0 1-4.6-2.2L4.4 14.6a1.5 1.5 0 0 1 2.3-1.9L9 15" /></svg>
+        <span className="desk">Move the mouse to steer · fly close for fuel</span>
+        <span className="touch">Drag anywhere to steer · fly close for fuel</span>
+      </div>
+      <div className="flash" ref={r.flash} aria-hidden="true" />
       <div className="fuelbox hud-part">
         <div className="deflector" aria-label="Deflector charge">
           <small>Deflector</small>
@@ -400,8 +453,11 @@ export default function GameClient() {
             ))}
           </span>
         </div>
-        <small>Fuel</small>
-        <div className="num" ref={r.fuelPct}>100%</div>
+        <div className="fuel-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h9a1 1 0 0 1 1 1v6h1.5A2.5 2.5 0 0 1 19 12.5V18a1 1 0 0 0 2 0v-7.6l-2.3-2.3 1.4-1.4L23 9.6V18a3 3 0 0 1-6 0v-5.5a.5.5 0 0 0-.5-.5H15v9H4V4a1 1 0 0 1 1-1Zm1 2v5h7V5H6Z" /></svg>
+          <small>Fuel</small>
+          <div className="num" ref={r.fuelPct}>100%</div>
+        </div>
         <div className="fuel"><i ref={r.fuelBar} /></div>
       </div>
 
@@ -465,11 +521,11 @@ export default function GameClient() {
               </article>
             )}
             <div className="obs-bottom">
-              <nav className="obs-list" aria-label="Landmarks">
+              <ChipStrip label="Landmarks" selected={landmark}>
                 {LANDMARKS.map((l) => (
                   <button key={l.id} className={`chip${landmark === l.id ? " on" : ""}`} onClick={() => pickLandmark(l.id)}>{l.name}</button>
                 ))}
-              </nav>
+              </ChipStrip>
               <div className="obs-tools">
                 <button
                   className="btn ghost slim"
@@ -583,25 +639,35 @@ export default function GameClient() {
         </div>
       )}
 
-      {result && (phase === "over" || (phase === "surface" && showReport)) && (
-        <div className={`screen${phase === "surface" ? " report" : ""}`}>
-          <div className="col">
+      {result && (phase === "over" || (phase === "surface" && showReport)) && (() => {
+        const medal = medalFor(result.km, result.reason === "moon");
+        const newBest = !result.test && result.pct > prevBest;
+        return (
+        <div className={`screen over${phase === "surface" ? " report" : ""}`}>
+          <div className={`result-card${newBest ? " has-ribbon" : ""}`} role="dialog" aria-label="Flight result">
             {phase === "surface" && <button className="obs-x" onClick={() => setShowReport(false)} aria-label="Close mission report">×</button>}
-            <p className="big num">{formatPct(result.pct)}</p>
-            <p className="sub">{result.reason === "moon" ? "You reached the Moon" : "of the way to the Moon"}</p>
+            {newBest && <div className="ribbon">{prevBest > 0 ? "New best!" : "First flight!"}</div>}
+            <div className="result-head">
+              <Medal tier={medal.tier} />
+              <div>
+                <p className={`result-rank-title ${medal.tier}`}>{medal.title}</p>
+                <p className="big num">{formatPct(result.pct)}</p>
+                <p className="sub">{result.reason === "moon" ? "You reached the Moon" : "of the way to the Moon"}</p>
+              </div>
+            </div>
+            <p className={`result-why${result.reason === "moon" ? " good" : ""}`}>
+              {result.reason === "moon" ? `384,400 km in ${Math.round(result.durationMs / 1000)} seconds` : `${END_REASON_TEXT[result.reason]} at ${formatKm(result.km)} km`}
+            </p>
             {result.quote && (
               <p className="quote"><span className="who">{result.quote.speaker}</span>“{result.quote.text}”</p>
             )}
-            <p className="why">
-              {result.reason === "moon" ? `384,400 km in ${Math.round(result.durationMs / 1000)} seconds.` : `${END_REASON_TEXT[result.reason]} at ${formatKm(result.km)} km`}
-            </p>
-            {result.lastMilestone && <p className="why">Last milestone: {result.lastMilestone}</p>}
-            <p className="why">
-              {result.closeCalls
-                ? `${result.closeCalls} close call${result.closeCalls === 1 ? "" : "s"}${result.bestStreak > 1 ? `, best streak ×${result.bestStreak}` : ""}`
-                : "No close calls. Playing it safe."}
-            </p>
-            {result.shots > 0 && <p className="why">{deflectorLine(result)}</p>}
+            <ul className="chips">
+              <li><Icon d="M3 17l6-6 4 4 8-8M15 7h6v6" />{formatKm(result.km)} km</li>
+              <li className={result.closeCalls ? "hot" : undefined}><Icon d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />{result.closeCalls} close call{result.closeCalls === 1 ? "" : "s"}</li>
+              {result.bestStreak > 1 && <li className="hot"><Icon d="M12 2c1 4 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 1-9Z" />×{result.bestStreak} streak</li>}
+              {result.lastMilestone && <li><Icon d="M5 21V4h11l-2 4 2 4H5" />{result.lastMilestone}</li>}
+              {result.shots > 0 && <li className={result.satellites ? "bad" : undefined}><Icon d="M12 3v4M12 17v4M3 12h4M17 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />{deflectorLine(result)}</li>}
+            </ul>
             <p className="rank">
               {submit.status === "sending" && "Adding you to today's board…"}
               {submit.status === "done" && (
@@ -616,17 +682,20 @@ export default function GameClient() {
               )}
               {submit.status === "error" && <span className="why">{submit.message}</span>}
             </p>
-            <div className="row">
+            <div className="result-actions">
               {phase === "surface"
-                ? <button className="btn go" onClick={() => setShowReport(false)} autoFocus>Back to the surface</button>
-                : <button className="btn go" onClick={launch} autoFocus>Launch again</button>}
+                ? <button className="btn go fly" onClick={() => setShowReport(false)} autoFocus>Back to the surface</button>
+                : <button className="btn go fly" onClick={launch} autoFocus>Fly again</button>}
               {!result.test && <button className="btn ghost" onClick={share}>{shareLabel}</button>}
             </div>
-            {best > 0 && <p className="today">Your best: {formatPct(best)} of the way</p>}
-            <Link className="small-link" href="/leaderboard">Today&apos;s leaderboard</Link>
+            <p className="result-foot">
+              {best > 0 && <span>Your best: <strong>{formatPct(best)}</strong></span>}
+              <Link href="/leaderboard">Leaderboard</Link>
+            </p>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {(phase === "landing" || phase === "surface") && (
         <SurfaceUI
