@@ -11,6 +11,66 @@ function additive(color: number, opacity: number) {
  */
 export const EXTERIOR_LAYER = 1;
 
+/**
+ * Hull radius at height y (model units, -1.8 at the engines to 3.4 at the capsule tip):
+ * first stage, taper to the upper stages, then the Apollo stack: spacecraft adapter
+ * (a cone), service module (a short cylinder), command module (a blunt cone).
+ */
+function hullRadius(y: number) {
+  if (y < 1.2) return 0.55;
+  if (y < 1.6) return 0.55 - (0.1 * (y - 1.2)) / 0.4;
+  if (y < 2.4) return 0.45;
+  if (y < 2.8) return 0.45 - (0.14 * (y - 2.4)) / 0.4; // adapter
+  if (y < 3.02) return 0.31; // service module
+  if (y < 3.36) {
+    const t = (y - 3.02) / 0.34; // command module: a straight, steep cone like Apollo's
+    return 0.31 * (1 - t) + 0.05 * t + 0.006 * Math.sin(Math.PI * t);
+  }
+  return Math.max(0.004, 0.05 * (1 - (y - 3.36) / 0.04));
+}
+
+/** Launch escape system: red lattice tower on the capsule, white escape motor, pointed tip. */
+function escapeTower() {
+  const g = new THREE.Group();
+  const red = new THREE.MeshStandardMaterial({ color: 0xc9372c, roughness: 0.55, metalness: 0.2 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xf0f1f3, roughness: 0.45, metalness: 0.1 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x22252c, roughness: 0.5, metalness: 0.3 });
+  const base = 3.33, top = 3.64, rb = 0.052, rt = 0.036;
+  // Four legs leaning in, with two bracing rings and diagonals: reads as a lattice from afar.
+  const leg = new THREE.CylinderGeometry(0.009, 0.009, 1, 5);
+  const corners = [0, 1, 2, 3].map((i) => (i * Math.PI) / 2 + Math.PI / 4);
+  const at = (a: number, r: number, y: number) => new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r);
+  const strut = (p: THREE.Vector3, q: THREE.Vector3) => {
+    const m = new THREE.Mesh(leg, red);
+    m.position.copy(p).add(q).multiplyScalar(0.5);
+    m.scale.y = p.distanceTo(q);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), q.clone().sub(p).normalize());
+    g.add(m);
+  };
+  corners.forEach((a, i) => {
+    strut(at(a, rb, base), at(a, rt, top));
+    const b = corners[(i + 1) % 4];
+    strut(at(a, rb, base), at(b, (rb + rt) / 2, (base + top) / 2)); // diagonal brace
+  });
+  for (const [y, r] of [[base + 0.12, rb - 0.006], [top - 0.01, rt + 0.002]] as const) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.007, 4, 16), red);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = y;
+    g.add(ring);
+  }
+  // Escape motor with its angled nozzles at the bottom, then the canard section and tip.
+  const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.05, 0.3, 16), white);
+  motor.position.y = top + 0.15;
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.036, 0.04, 16), dark);
+  skirt.position.y = top + 0.0;
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.03, 16), red);
+  band.position.y = top + 0.27;
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.16, 16), red);
+  nose.position.y = top + 0.38;
+  g.add(motor, skirt, band, nose);
+  return g;
+}
+
 /** Saturn-style rocket pointing down -Z, with a layered exhaust plume. */
 export function createRocket(glowTexture: THREE.Texture) {
   const ship = new THREE.Group();
@@ -19,24 +79,20 @@ export function createRocket(glowTexture: THREE.Texture) {
   model.scale.setScalar(0.72);
   ship.add(model);
 
+  // Hull profile, bottom to top. Evenly spaced in y so the paint texture's v = (y + 1.8) / 5.2
+  // (see rocketPaintTexture, which paints the seams and modules at matching heights).
   const profile = [new THREE.Vector2(0, -1.8)];
-  for (let i = 0; i <= 48; i++) {
-    const y = -1.8 + (i / 48) * 5.2;
-    let r: number;
-    if (y < 1.2) r = 0.55;
-    else if (y < 1.6) r = 0.55 - (0.1 * (y - 1.2)) / 0.4;
-    else if (y < 2.3) r = 0.45;
-    else {
-      const t = (y - 2.3) / 1.1;
-      r = 0.45 * Math.pow(Math.max(0, 1 - t * t), 0.62) + 0.004;
-    }
-    profile.push(new THREE.Vector2(r, y));
+  const STEPS = 130;
+  for (let i = 0; i <= STEPS; i++) {
+    const y = -1.8 + (i / STEPS) * 5.2;
+    profile.push(new THREE.Vector2(hullRadius(y), y));
   }
-  model.add(new THREE.Mesh(new THREE.LatheGeometry(profile, 48), new THREE.MeshStandardMaterial({ map: rocketPaintTexture(), roughness: 0.42, metalness: 0.15 })));
-
-  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.05, 0.7, 6), new THREE.MeshStandardMaterial({ color: 0xc9372c, roughness: 0.6 }));
-  tower.position.y = 3.7;
-  model.add(tower);
+  const hull = new THREE.LatheGeometry(profile, 56);
+  // Paint by height, exactly (the lathe would spread v over profile points, including the bottom cap).
+  const pos = hull.attributes.position, uv = hull.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setY(i, (pos.getY(i) + 1.8) / 5.2);
+  model.add(new THREE.Mesh(hull, new THREE.MeshStandardMaterial({ map: rocketPaintTexture(), roughness: 0.42, metalness: 0.15 })));
+  model.add(escapeTower());
 
   const bellProfile = [new THREE.Vector2(0.09, 0), new THREE.Vector2(0.1, -0.08), new THREE.Vector2(0.14, -0.22), new THREE.Vector2(0.21, -0.46)];
   const bellMat = new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: 0.6, roughness: 0.35, side: THREE.DoubleSide });

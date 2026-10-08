@@ -78,7 +78,10 @@ game/                       FRAMEWORK-FREE ENGINE (no React imports, ever)
   world/sky.ts              sky gradient shader, stars, SUN_DIR
   world/earth.ts            Earth sphere, cloud layer, atmosphere glow
   world/moon.ts             Moon with custom lit shader + height-map relief (MoonSurface)
-  world/rocket.ts           Saturn-style rocket + exhaust; setThrust(); EXTERIOR_LAYER
+  world/rocket.ts           Saturn V-style rocket + exhaust; setThrust(); EXTERIOR_LAYER. hullRadius(y) is
+                            the lathe profile (stages, adapter, service module, command module cone);
+                            escapeTower() adds the launch escape system; rocketPaintTexture paints
+                            seams/modules at v = (y + 1.8) / 5.2, so keep both in sync
   world/launchpad.ts        LaunchPad: own scene (coast, tower, swing arms, steam/smoke),
                             launch timeline and its three camera shots
   world/obstacles.ts        ObjectFactory (obstacles, fuel, clouds), lane bounds

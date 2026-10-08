@@ -297,6 +297,16 @@ export function rocketPaintTexture() {
   ctx.fillRect(0, V(0.76), 256, V(0.745) - V(0.76));
   ctx.fillStyle = "#c9372c";
   ctx.fillRect(0, V(0.52), 256, V(0.505) - V(0.52));
+  // Apollo stack (heights match hullRadius in rocket.ts; v = (y + 1.8) / 5.2).
+  const Y = (y: number) => V((y + 1.8) / 5.2);
+  ctx.fillStyle = "#c4c9d1"; // service module: brushed metal
+  ctx.fillRect(0, Y(3.02), 256, Y(2.8) - Y(3.02));
+  ctx.fillStyle = "rgba(40,44,52,.55)"; // radiator panels
+  for (let x = 0; x < 256; x += 32) ctx.fillRect(x + 4, Y(3.0), 10, Y(2.83) - Y(3.0));
+  ctx.fillStyle = "#e7eaee"; // command module (boost cover)
+  ctx.fillRect(0, Y(3.4), 256, Y(3.02) - Y(3.4));
+  ctx.fillStyle = "#16181d"; // seams between modules
+  for (const y of [2.4, 2.8, 3.02]) ctx.fillRect(0, Y(y + 0.012), 256, Y(y - 0.012) - Y(y + 0.012));
   for (let i = 0; i < 60; i++) {
     ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.05})`;
     ctx.fillRect(0, Math.random() * 512, 256, 1 + Math.random() * 2);
